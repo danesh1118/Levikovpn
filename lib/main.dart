@@ -25,11 +25,13 @@ Future<void> main() async {
 class Node {
   final String link;
   final String name;
-  final String location;
-  final String flag;
+  String location;
+  String flag;
   final String host;
   final int port;
   int? pingMs;
+  String city = '';
+  String countryCode = '';
 
   Node({
     required this.link,
@@ -56,6 +58,11 @@ class _LevikoAppState extends State<LevikoApp> {
   List<Node> nodes = [];
   Node? selected;
   StreamSubscription? statusSub;
+  StreamSubscription? statsSub;
+  double downBps = 0;
+  double upBps = 0;
+  int downTotal = 0;
+  int upTotal = 0;
 
   String tr(String fa, String en) => english ? en : fa;
 
@@ -70,12 +77,22 @@ class _LevikoAppState extends State<LevikoApp> {
               ? tr('در حال اتصال', 'Connecting')
               : tr('قطع', 'Disconnected'));
     });
+    statsSub = SingBox.instance.watchConnectionStats().listen((stats) {
+      if (!mounted) return;
+      setState(() {
+        downBps = stats.downloadSpeed.toDouble();
+        upBps = stats.uploadSpeed.toDouble();
+        downTotal = stats.downloadTotal;
+        upTotal = stats.uploadTotal;
+      });
+    });
     loadSubscription();
   }
 
   @override
   void dispose() {
     statusSub?.cancel();
+    statsSub?.cancel();
     super.dispose();
   }
 
@@ -95,7 +112,7 @@ class _LevikoAppState extends State<LevikoApp> {
           .split(RegExp(r'[\r\n]+'))
           .map((s) => s.trim())
           .where((s) => s.isNotEmpty && !s.startsWith('#'))
-          .where((s) => RegExp(r'^(vless|vmess|trojan|ss|wireguard|wg)://',
+          .where((s) => RegExp(r'^(vless|vmess|trojan|ss)://',
                   caseSensitive: false)
               .hasMatch(s))
           .map(_parseNode)
@@ -108,6 +125,7 @@ class _LevikoAppState extends State<LevikoApp> {
       }
       for (final node in parsed) {
         node.pingMs = await _tcpPing(node.host, node.port);
+        await _lookupLocation(node);
       }
       parsed.sort((a, b) =>
           (a.pingMs ?? 999999).compareTo(b.pingMs ?? 999999));
@@ -216,6 +234,92 @@ class _LevikoAppState extends State<LevikoApp> {
         .firstMatch(remark);
     return (english ? 'Unknown location' : 'موقعیت نامشخص',
         flagMatch?.group(0) ?? '🌐');
+  }
+
+  Future<void> _lookupLocation(Node node) async {
+    try {
+      final addresses = await InternetAddress.lookup(node.host)
+          .timeout(const Duration(seconds: 4));
+      if (addresses.isEmpty) return;
+      final ip = addresses.first.address;
+      final response = await http.get(Uri.parse('https://ipwho.is/$ip'))
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) return;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      if (data['success'] == false) return;
+      node.city = '${data['city'] ?? ''}'.trim();
+      node.location = '${data['country'] ?? ''}'.trim().isEmpty
+          ? node.location : '${data['country']}';
+      node.countryCode = '${data['country_code'] ?? ''}'.toUpperCase();
+      node.flag = _flagFromCode(node.countryCode);
+    } catch (_) {
+      // Keep the location inferred from the subscription remark as fallback.
+    }
+  }
+
+  String _flagFromCode(String code) {
+    if (code.length != 2) return '🌐';
+    final upper = code.toUpperCase();
+    return String.fromCharCodes(upper.codeUnits.map((c) => 0x1F1E6 + c - 65));
+  }
+
+  String _cityLabel(Node n) => n.city.isNotEmpty
+      ? n.city
+      : (n.location.isNotEmpty ? n.location : tr('موقعیت نامشخص', 'Unknown location'));
+
+  String _formatBytes(int value) {
+    const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    double v = value.toDouble();
+    int i = 0;
+    while (v >= 1000 && i < units.length - 1) { v /= 1000; i++; }
+    return '${v.toStringAsFixed(i == 0 ? 0 : 2)} ${units[i]}';
+  }
+
+  String _formatSpeed(double value) {
+    if (value >= 1000000) return '${(value / 1000000).toStringAsFixed(2)} MB/s';
+    if (value >= 1000) return '${(value / 1000).toStringAsFixed(1)} KB/s';
+    return '${value.toStringAsFixed(0)} B/s';
+  }
+
+  void _openLocations() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF15111E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26))),
+      builder: (context) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.of(context).size.height * .72,
+          child: Column(children: [
+            const SizedBox(height: 12),
+            Container(width: 42, height: 4, decoration: BoxDecoration(
+              color: Colors.white24, borderRadius: BorderRadius.circular(8))),
+            Padding(padding: const EdgeInsets.all(18), child: Row(children: [
+              const Icon(Icons.public, color: Color(0xFFC9A7FF)),
+              const SizedBox(width: 10),
+              Text(tr('انتخاب سرور', 'Select server'), style: const TextStyle(
+                fontSize: 19, fontWeight: FontWeight.bold)),
+              const Spacer(),
+              Text('${nodes.length}', style: const TextStyle(color: Colors.white54)),
+            ])),
+            Expanded(child: ListView(padding: const EdgeInsets.symmetric(horizontal: 16),
+              children: [
+                _serverTile(flag: '⚡', title: tr('سریع‌ترین سرور', 'Fastest server'),
+                  subtitle: tr('انتخاب بر اساس کمترین پینگ', 'Lowest measured latency'),
+                  ping: nodes.map((e) => e.pingMs).whereType<int>().fold<int?>(null,
+                    (a,b) => a == null || b < a ? b : a), selectedTile: false,
+                  onTap: () { Navigator.pop(context); fastest(); }),
+                const SizedBox(height: 8),
+                ...nodes.map((n) => _serverTile(flag: n.flag,
+                  title: _cityLabel(n), subtitle: n.location,
+                  ping: n.pingMs, selectedTile: selected == n,
+                  onTap: () { setState(() => selected = n); Navigator.pop(context); })),
+              ])),
+          ]),
+        ),
+      ),
+    );
   }
 
   Future<int?> _tcpPing(String host, int port) async {
@@ -362,29 +466,31 @@ class _LevikoAppState extends State<LevikoApp> {
                           ),
                         ),
                         const SizedBox(height: 26),
-                        _sectionTitle(tr('انتخاب موقعیت', 'Choose location')),
+                        _sectionTitle(tr('موقعیت اتصال', 'Connection location')),
                         const SizedBox(height: 10),
-                        _serverTile(
-                          flag: '⚡',
-                          title: tr('سریع‌ترین موقعیت', 'Fastest location'),
-                          subtitle: tr('اتصال به کمترین پینگ',
-                              'Connect to the lowest latency'),
-                          ping: nodes.where((n) => n.pingMs != null)
-                              .map((n) => n.pingMs!)
-                              .fold<int?>(null, (a, b) =>
-                                  a == null || b < a ? b : a),
-                          selectedTile: false,
-                          onTap: busy ? null : fastest,
+                        Card(
+                          color: const Color(0xFF171020),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18),
+                            side: const BorderSide(color: Color(0xFF493064))),
+                          child: ListTile(
+                            onTap: _openLocations,
+                            leading: const CircleAvatar(backgroundColor: Color(0xFF2A1A3C),
+                              child: Icon(Icons.public, color: Color(0xFFC9A7FF))),
+                            title: Text(selected == null ? tr('انتخاب سرور', 'Choose server') : _cityLabel(selected!),
+                              style: const TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Text(tr('برای دیدن همه سرورها لمس کنید', 'Tap to view all servers'),
+                              style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                            trailing: const Icon(Icons.keyboard_arrow_down, color: Color(0xFFC9A7FF)),
+                          ),
                         ),
-                        const SizedBox(height: 8),
-                        ...nodes.map((n) => _serverTile(
-                          flag: n.flag,
-                          title: n.location,
-                          subtitle: n.name,
-                          ping: n.pingMs,
-                          selectedTile: selected == n,
-                          onTap: busy ? null : () => setState(() => selected = n),
-                        )),
+                        const SizedBox(height: 14),
+                        Row(children: [
+                          Expanded(child: _statCard(Icons.arrow_downward, tr('دریافت', 'Download'),
+                            _formatSpeed(downBps), _formatBytes(downTotal))),
+                          const SizedBox(width: 10),
+                          Expanded(child: _statCard(Icons.arrow_upward, tr('ارسال', 'Upload'),
+                            _formatSpeed(upBps), _formatBytes(upTotal))),
+                        ]),
                         const SizedBox(height: 24),
                         Container(
                           padding: const EdgeInsets.all(16),
@@ -433,6 +539,19 @@ class _LevikoAppState extends State<LevikoApp> {
       ),
     );
   }
+
+  Widget _statCard(IconData icon, String title, String speed, String total) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(color: const Color(0xFF15121B),
+      borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFF292331))),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [Icon(icon, size: 17, color: const Color(0xFFC9A7FF)),
+        const SizedBox(width: 7), Text(title, style: const TextStyle(color: Colors.white70))]),
+      const SizedBox(height: 9), Text(speed, style: const TextStyle(
+        fontSize: 17, fontWeight: FontWeight.bold, color: Color(0xFF79E6B5))),
+      const SizedBox(height: 3), Text(total, style: const TextStyle(fontSize: 11, color: Colors.white54)),
+    ]),
+  );
 
   Widget _sectionTitle(String text) => Text(text,
       style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold));
