@@ -9,6 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,28 +35,42 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
+
           manifest = Path("android/app/src/main/AndroidManifest.xml")
-          if not manifest.exists():
-              raise SystemExit("AndroidManifest.xml was not generated")
+          if not manifest.is_file():
+              raise SystemExit(f"Manifest not found: {manifest}")
+
           text = manifest.read_text(encoding="utf-8")
-          match = re.search(r"<application\\b[^>]*>", text, flags=re.DOTALL)
-          if not match:
-              raise SystemExit("Could not find the application tag")
-          tag = match.group(0)
-          if re.search(r'android:label\\s*=', tag):
-              tag = re.sub(r'android:label\\s*=\\s*"[^"]*"', 'android:label="Leviko VPN"', tag, count=1)
+          app_match = re.search(r"<application\b[^>]*>", text, flags=re.IGNORECASE | re.DOTALL)
+          if app_match is None:
+              print("Manifest content:")
+              print(text)
+              raise SystemExit("Could not find <application> element")
+
+          app_tag = app_match.group(0)
+          label_pattern = r'\bandroid:label\s*=\s*"[^"]*"'
+          if re.search(label_pattern, app_tag):
+              updated_tag = re.sub(
+                  label_pattern,
+                  'android:label="Leviko VPN"',
+                  app_tag,
+                  count=1
+              )
           else:
-              tag = tag[:-1] + ' android:label="Leviko VPN">'
-          text = text[:match.start()] + tag + text[match.end():]
-          manifest.write_text(text, encoding="utf-8")
+              updated_tag = app_tag[:-1] + ' android:label="Leviko VPN">'
+
+          updated_text = text[:app_match.start()] + updated_tag + text[app_match.end():]
+          manifest.write_text(updated_text, encoding="utf-8")
+          print("App display name set to Leviko VPN")
           PY
 
       - name: Check App Icon File
         run: |
-          test -f assets/icon/app_icon.png || {
-            echo "ERROR: Upload your logo to assets/icon/app_icon.png in the repository."
+          if [ ! -f assets/icon/app_icon.png ]; then
+            echo "ERROR: Logo file is missing."
+            echo "Upload your PNG logo to: assets/icon/app_icon.png"
             exit 1
-          }
+          fi
 
       - name: Install Icon Generator
         run: flutter pub add --dev flutter_launcher_icons
