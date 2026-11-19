@@ -1,4 +1,1 @@
-This project depends on sing_box / sing-box, distributed under GPL-3.0-or-later.
-Review the upstream license and comply with source-code, attribution and notice
-requirements before distributing binaries. This starter project is not an
-official SagerNet product and is not affiliated with the sing-box maintainers.
+This project depends on sing_box, which bundles the sing-box core. The package and core are distributed under GNU GPL version 3 or later (GPL-3.0-or-later). Distribution of binaries must comply with that license, including providing the complete corresponding source code and applicable notices. See https://pub.dev/packages/sing_box and the package's THIRD_PARTY_NOTICES.md.

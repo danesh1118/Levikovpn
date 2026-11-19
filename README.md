@@ -1,41 +1,35 @@
-# Leviko VPN — Android Flutter project
+# Leviko VPN — Updated Android source
 
-## Included
-- Persian / English interface.
-- Black + neon-purple visual style.
-- Fixed subscription URL configured in `lib/main.dart`.
-- Server names/locations shown without displaying share links or IDs.
-- TCP latency check and fastest-server selection.
-- VPN connect/disconnect through the `sing_box` Flutter package.
-- Telegram channel promo panel.
+## Included changes
+- Dark premium purple interface with a cleaner home screen.
+- Server list moved into a bottom-sheet window; raw configuration remarks/IDs are not displayed.
+- Server city/country lookup using the server hostname's resolved IP via ipwho.is; country flag is generated from the returned ISO country code. If lookup fails, the subscription remark is used as a fallback.
+- Live upload/download speed and total traffic cards using sing-box traffic statistics.
+- Fastest server selection, TCP latency display, Persian/English UI, Telegram channel button.
+- Supports VLESS, VMess, Trojan and Shadowsocks links only.
 
 ## Build
-Requirements: Flutter stable, Android SDK, JDK 17 or newer.
+Use Flutter 3.44+ (the GitHub workflow can use Flutter stable 3.50), JDK 17+, and Android SDK.
 
 ```bash
 flutter pub get
 flutter create . --platforms=android
-flutter run
+flutter build apk --release --split-per-abi
 ```
 
-To build a release APK:
-```bash
-flutter build apk --release
-```
+The smaller device-specific APKs are created under `build/app/outputs/flutter-apk/`.
 
-For smaller device-specific APKs:
-```bash
-flutter build apk --split-per-abi --release
-```
+## Important limitations
+- This source has been updated, but it has **not been built or tested on a physical Android phone in this environment**. Run a new GitHub Actions build and test the APK before distributing it.
+- City/country is inferred from the server hostname's public IP using a third-party geolocation service. This can show the hosting/CDN location rather than the VPN exit location; city data may be unavailable. If lookup fails, the app falls back to the subscription remark. No geolocation provider can guarantee every server has a city result.
+- The latency shown is a TCP handshake estimate, not a real end-to-end VPN latency test. The upload/download cards show the sing-box core's live traffic counters; if both remain zero after connecting, inspect sing-box logs and verify the selected subscription node is reachable and correctly configured. A VPN permission dialog and a connected system icon alone do not prove the proxy is passing traffic.
+- The app's connect call delegates configuration validation and tunnel creation to sing-box. Incorrect credentials, unsupported transports (for example XHTTP), server-side ACLs, DNS issues, or unreachable endpoints can still result in no traffic.
+- The subscription URL is embedded in the app and is public. Hiding it in the UI does not make it secret; the selected link must be present on-device for the tunnel to work. Use an authenticated backend with short-lived tokens if access control is required.
+- `sing_box` and the sing-box core are GPL-3.0-or-later. Comply with the license and include the complete corresponding source/notices when distributing the app.
 
-## Important implementation notes
-1. The subscription URL is a public raw GitHub file. Anyone who obtains it can read its contents. Hiding it in the app UI does not make it secret. For real protection, proxy subscription access through an authenticated backend and issue short-lived user tokens.
-2. The app never renders the raw share links in its UI, but the VPN core must receive a selected link on-device to establish the tunnel. A technically determined user can inspect app memory/network traffic on a rooted or instrumented device.
-3. The current subscription was inspected during project preparation and contained VLESS and Shadowsocks links. The app filters VLESS, VMess, Trojan, Shadowsocks and WireGuard share links. OpenVPN `.ovpn` profiles are not supported by sing-box and need a separate OpenVPN engine/integration.
-4. The location label is inferred from the server remark/flag in the subscription. This first version does not perform third-party IP geolocation lookups. Ping is a TCP connection-time estimate, not an ICMP ping and not a full throughput test.
-5. `sing_box` and sing-box are GPL-3.0-or-later. If distributing an app that bundles this engine, comply with the applicable GPL source and notices requirements. See package documentation:
-   https://pub.dev/packages/sing_box
-6. The Telegram button opens `https://t.me/Leviko_v2ray` using `url_launcher`.
+## Subscription
+Configured in `lib/main.dart`:
+`https://raw.githubusercontent.com/danesh1118/SS/refs/heads/main/CC`
 
-## Security
-Do not commit private subscription URLs or user credentials into a public repository. The configured URL is already public by design.
+## Telegram
+`https://t.me/Leviko_v2ray`
