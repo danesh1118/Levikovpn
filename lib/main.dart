@@ -329,127 +329,46 @@ class _LevikoAppState extends State<LevikoApp> {
   }
 
   void _openLocations() {
-    if (nodes.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(loading
-            ? tr('در حال دریافت سرورها… کمی صبر کن.', 'Loading servers… please wait.')
-            : tr('سروری دریافت نشده؛ دکمه تازه‌سازی را بزن.', 'No servers loaded; tap refresh.')),
-      ));
-      return;
-    }
-
-    String query = '';
-    bool onlyFavorites = false;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
+      useRootNavigator: true,
+      enableDrag: true,
       backgroundColor: const Color(0xFF15111E),
-      barrierColor: Colors.black.withOpacity(.72),
+      barrierColor: Colors.black.withOpacity(.78),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
       ),
       builder: (sheetContext) => StatefulBuilder(
         builder: (sheetContext, sheetSetState) {
-          final filtered = nodes.where((n) {
-            final q = query.trim().toLowerCase();
-            final searchable = '${n.name} ${n.location} ${n.city} ${n.countryCode}'.toLowerCase();
-            return searchable.contains(q) && (!onlyFavorites || n.favorite);
-          }).toList();
-          return SizedBox(
-            height: MediaQuery.of(sheetContext).size.height * .86,
-            child: Column(children: [
-              const SizedBox(height: 12),
-              Container(width: 44, height: 5, decoration: BoxDecoration(
-                color: Colors.white30, borderRadius: BorderRadius.circular(8))),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 14, 10, 12),
-                child: Row(children: [
-                  const Icon(Icons.dns_rounded, color: Color(0xFFC9A7FF), size: 25),
-                  const SizedBox(width: 10),
-                  Expanded(child: Text(tr('لیست سرورها', 'Server list'),
-                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900))),
-                  Container(padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-                    decoration: BoxDecoration(color: const Color(0xFF34204B), borderRadius: BorderRadius.circular(20)),
-                    child: Text('${nodes.length}')),
-                  IconButton(onPressed: () => Navigator.pop(sheetContext),
-                    icon: const Icon(Icons.close, color: Colors.white70)),
-                ]),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: TextField(
-                  autofocus: false,
-                  onChanged: (v) => sheetSetState(() => query = v),
-                  decoration: InputDecoration(
-                    hintText: tr('جستجو بر اساس نام کانفیگ یا کشور', 'Search config name or country'),
-                    prefixIcon: const Icon(Icons.search, color: Color(0xFFC9A7FF)),
-                    filled: true, fillColor: const Color(0xFF211A2B),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 9, 16, 8),
-                child: Row(children: [
-                  ChoiceChip(label: Text(tr('همه', 'All')), selected: !onlyFavorites,
-                    onSelected: (_) => sheetSetState(() => onlyFavorites = false)),
-                  const SizedBox(width: 8),
-                  ChoiceChip(avatar: const Icon(Icons.star, size: 15), label: Text(tr('علاقه‌مندی‌ها', 'Favorites')),
-                    selected: onlyFavorites, onSelected: (_) => sheetSetState(() => onlyFavorites = true)),
-                  const Spacer(),
-                  IconButton(tooltip: tr('تازه‌سازی', 'Refresh'),
-                    onPressed: () { Navigator.pop(sheetContext); loadSubscription(); },
-                    icon: const Icon(Icons.refresh, color: Color(0xFFC9A7FF))),
-                ]),
-              ),
-              const Divider(height: 1, color: Color(0xFF34283F)),
-              Expanded(child: filtered.isEmpty
-                ? Center(child: Text(onlyFavorites ? tr('مورد علاقه‌ای ثبت نشده.', 'No favorites yet.') : tr('موردی پیدا نشد.', 'No matching servers.'),
-                    style: const TextStyle(color: Colors.white60)))
-                : ListView.separated(
-                    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
-                    itemCount: filtered.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 5),
-                    itemBuilder: (_, index) {
-                      final n = filtered[index];
-                      final isSelected = selected != null && _nodeKey(selected!) == _nodeKey(n);
-                      return Card(
-                        color: isSelected ? const Color(0xFF2A1740) : const Color(0xFF1C1724),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15),
-                          side: BorderSide(color: isSelected ? const Color(0xFFB77BFF) : const Color(0xFF34283F))),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-                          onTap: () {
-                            setState(() => selected = n);
-                            Navigator.pop(sheetContext);
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                              content: Text(tr('سرور انتخاب شد؛ برای اتصال دکمه اتصال را بزن.', 'Server selected. Press Connect to start.')),
-                              duration: const Duration(seconds: 2),
-                            ));
-                          },
-                          leading: Text(n.flag, style: const TextStyle(fontSize: 27)),
-                          title: Text(n.name.isNotEmpty ? n.name : _cityLabel(n),
-                            maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w800, color: Colors.white)),
-                          subtitle: Text(n.location.isNotEmpty ? n.location : _cityLabel(n),
-                            maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Colors.white54, fontSize: 11)),
-                          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                            Text(n.pingMs == null ? '—' : '${n.pingMs} ms',
-                              style: const TextStyle(color: Color(0xFF79E6B5), fontWeight: FontWeight.bold)),
-                            IconButton(tooltip: tr('علاقه‌مندی', 'Favorite'),
-                              onPressed: () async { await _toggleFavorite(n); sheetSetState(() {}); },
-                              icon: Icon(n.favorite ? Icons.star : Icons.star_border,
-                                color: n.favorite ? Colors.amber : Colors.white54)),
-                            if (isSelected) const Icon(Icons.check_circle, color: Color(0xFFC9A7FF)),
-                          ]),
-                        ),
-                      );
-                    },
-                  )),
-            ]),
+          final currentNodes = [...nodes];
+          String query = '';
+          // The stateful builder owns the query state below; keep it in the
+          // dedicated content widget so each keystroke updates the results.
+          return _ServerPickerSheet(
+            nodes: currentNodes,
+            loading: loading,
+            english: english,
+            selectedKey: selected == null ? null : _nodeKey(selected!),
+            onRefresh: () async {
+              await loadSubscription();
+              if (sheetContext.mounted) sheetSetState(() {});
+            },
+            onFavorite: (node) async {
+              await _toggleFavorite(node);
+              if (sheetContext.mounted) sheetSetState(() {});
+            },
+            onSelect: (node) {
+              setState(() => selected = node);
+              Navigator.of(sheetContext).pop();
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(tr('سرور انتخاب شد؛ برای اتصال دکمه اتصال را بزن.', 'Server selected. Press Connect to start.')),
+                duration: const Duration(seconds: 2),
+              ));
+            },
+            tr: tr,
+            cityLabel: _cityLabel,
           );
         },
       ),
@@ -653,7 +572,7 @@ class _LevikoAppState extends State<LevikoApp> {
                         const SizedBox(height: 10),
                         Row(children: [
                           Expanded(child: SizedBox(height: 52, child: FilledButton.icon(
-                            onPressed: loading || nodes.isEmpty ? null : _openLocations,
+                            onPressed: _openLocations,
                             icon: const Icon(Icons.list_alt_rounded),
                             label: Text(tr('لیست سرورها', 'SERVER LIST'), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14)),
                             style: FilledButton.styleFrom(backgroundColor: const Color(0xFF8B42E8), foregroundColor: Colors.white,
@@ -839,6 +758,120 @@ class GlobePainter extends CustomPainter {
   bool shouldRepaint(covariant GlobePainter oldDelegate) => oldDelegate.latitude != latitude || oldDelegate.longitude != longitude || oldDelegate.phase != phase;
 }
 
+
+class _ServerPickerSheet extends StatefulWidget {
+  final List<Node> nodes;
+  final bool loading;
+  final bool english;
+  final String? selectedKey;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function(Node) onFavorite;
+  final void Function(Node) onSelect;
+  final String Function(String, String) tr;
+  final String Function(Node) cityLabel;
+
+  const _ServerPickerSheet({
+    required this.nodes, required this.loading, required this.english,
+    required this.selectedKey, required this.onRefresh,
+    required this.onFavorite, required this.onSelect,
+    required this.tr, required this.cityLabel,
+  });
+
+  @override
+  State<_ServerPickerSheet> createState() => _ServerPickerSheetState();
+}
+
+class _ServerPickerSheetState extends State<_ServerPickerSheet> {
+  String query = '';
+  bool onlyFavorites = false;
+  bool refreshing = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = widget.nodes.where((n) {
+      final q = query.trim().toLowerCase();
+      final searchable = '${n.name} ${n.location} ${n.city} ${n.countryCode}'.toLowerCase();
+      return searchable.contains(q) && (!onlyFavorites || n.favorite);
+    }).toList();
+    return SizedBox(
+      height: MediaQuery.of(context).size.height * .88,
+      child: Column(children: [
+        const SizedBox(height: 12),
+        Container(width: 46, height: 5, decoration: BoxDecoration(color: Colors.white38, borderRadius: BorderRadius.circular(8))),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 14, 10, 12),
+          child: Row(children: [
+            const Icon(Icons.dns_rounded, color: Color(0xFFC9A7FF), size: 26),
+            const SizedBox(width: 10),
+            Expanded(child: Text(widget.tr('لیست سرورها و کانفیگ‌ها', 'Servers & configurations'), style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900))),
+            Text('${widget.nodes.length}', style: const TextStyle(color: Color(0xFFC9A7FF), fontWeight: FontWeight.bold)),
+            IconButton(onPressed: () => Navigator.of(context).pop(), icon: const Icon(Icons.close, color: Colors.white70)),
+          ]),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: TextField(
+            onChanged: (v) => setState(() => query = v),
+            decoration: InputDecoration(
+              hintText: widget.tr('جستجو در نام کانفیگ یا کشور…', 'Search config name or country…'),
+              prefixIcon: const Icon(Icons.search, color: Color(0xFFC9A7FF)),
+              filled: true, fillColor: const Color(0xFF211A2B),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: Row(children: [
+            ChoiceChip(label: Text(widget.tr('همه سرورها', 'All servers')), selected: !onlyFavorites, onSelected: (_) => setState(() => onlyFavorites = false)),
+            const SizedBox(width: 8),
+            ChoiceChip(avatar: const Icon(Icons.star, size: 15), label: Text(widget.tr('نشان‌شده‌ها', 'Favorites')), selected: onlyFavorites, onSelected: (_) => setState(() => onlyFavorites = true)),
+            const Spacer(),
+            IconButton(tooltip: widget.tr('دریافت دوباره', 'Reload subscription'), onPressed: refreshing ? null : () async {
+              setState(() => refreshing = true);
+              await widget.onRefresh();
+              if (mounted) setState(() => refreshing = false);
+            }, icon: refreshing ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.refresh, color: Color(0xFFC9A7FF))),
+          ]),
+        ),
+        const Divider(height: 1, color: Color(0xFF34283F)),
+        Expanded(child: filtered.isEmpty
+          ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Icon(widget.loading ? Icons.sync : Icons.cloud_off, size: 42, color: const Color(0xFFC9A7FF)),
+              const SizedBox(height: 12),
+              Text(widget.loading ? widget.tr('در حال دریافت سرورها…', 'Loading servers…') : widget.tr('سروری در فهرست نیست. دریافت دوباره را بزن.', 'No servers loaded. Tap reload.'), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70)),
+              const SizedBox(height: 12),
+              FilledButton.icon(onPressed: refreshing ? null : () async { setState(() => refreshing = true); await widget.onRefresh(); if (mounted) setState(() => refreshing = false); }, icon: const Icon(Icons.refresh), label: Text(widget.tr('دریافت سرورها', 'Load servers'))),
+            ])))
+          : ListView.separated(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 26),
+              itemCount: filtered.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 5),
+              itemBuilder: (_, i) {
+                final n = filtered[i];
+                final chosen = widget.selectedKey == '${n.host}:${n.port}';
+                return Card(
+                  color: chosen ? const Color(0xFF2A1740) : const Color(0xFF1C1724),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15), side: BorderSide(color: chosen ? const Color(0xFFB77BFF) : const Color(0xFF34283F))),
+                  child: ListTile(
+                    onTap: () => widget.onSelect(n),
+                    leading: Text(n.flag, style: const TextStyle(fontSize: 26)),
+                    title: Text(n.name.isNotEmpty ? n.name : widget.cityLabel(n), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+                    subtitle: Text(widget.cityLabel(n), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white60, fontSize: 12)),
+                    trailing: SizedBox(width: 112, child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                      Expanded(child: Text(n.pingMs == null ? '…' : '${n.pingMs} ms', textAlign: TextAlign.end, style: const TextStyle(color: Color(0xFF79E6B5), fontWeight: FontWeight.bold))),
+                      IconButton(tooltip: widget.tr('علاقه‌مندی', 'Favorite'), onPressed: () => widget.onFavorite(n), icon: Icon(n.favorite ? Icons.star : Icons.star_border, color: n.favorite ? Colors.amber : Colors.white54)),
+                      if (chosen) const Icon(Icons.check_circle, color: Color(0xFFC9A7FF)),
+                    ])),
+                  ),
+                );
+              },
+            )),
+      ]),
+    );
+  }
+}
 
 class AnimatedGlobe extends StatefulWidget {
   final double? latitude;
