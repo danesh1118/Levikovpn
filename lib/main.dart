@@ -8,9 +8,15 @@ import 'package:http/http.dart' as http;
 import 'package:sing_box/sing_box.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 const subscriptionUrl =
     'https://raw.githubusercontent.com/danesh1118/SS/refs/heads/main/CC';
+
+// This file is hosted in this public repository. Change update.json to control
+// mandatory updates without rebuilding the app.
+const updateConfigUrl =
+    'https://raw.githubusercontent.com/danesh1118/Levikovpn/main/update.json';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -59,6 +65,10 @@ class _LevikoAppState extends State<LevikoApp> {
   bool english = false;
   bool loading = true;
   bool busy = false;
+  bool _checkingUpdate = true;
+  bool _updateRequired = false;
+  String _updateDownloadUrl = 'https://github.com/danesh1118/Levikovpn/releases/latest';
+  String _updateMessage = 'برای ادامه، نسخه جدید Leviko VPN را نصب کنید.';
   String message = '';
   String stateText = 'قطع';
   List<Node> nodes = [];
@@ -83,6 +93,7 @@ class _LevikoAppState extends State<LevikoApp> {
   void initState() {
     super.initState();
     favoritesReady = _loadFavorites();
+    unawaited(_checkMandatoryUpdate());
     statusSub = SingBox.instance.watchConnectionStatus().listen((s) {
       if (!mounted) return;
       setState(() => stateText = s == SingBoxConnectionStatus.connected
@@ -129,6 +140,52 @@ class _LevikoAppState extends State<LevikoApp> {
     stateSub?.cancel();
     connectionTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _checkMandatoryUpdate() async {
+    try {
+      final response = await http.get(Uri.parse(updateConfigUrl))
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) throw Exception('Update config HTTP ${response.statusCode}');
+      final data = jsonDecode(response.body);
+      if (data is! Map<String, dynamic>) throw const FormatException('Invalid update config');
+      final enabled = data['enabled'] == true;
+      final minimumVersion = (data['minimumVersion'] ?? '0.0.0').toString();
+      final latestVersion = (data['latestVersion'] ?? minimumVersion).toString();
+      final downloadUrl = (data['downloadUrl'] ?? '').toString();
+      final messageText = (data['message'] ?? '').toString();
+      final info = await PackageInfo.fromPlatform();
+      final required = enabled && _compareVersions(info.version, minimumVersion) < 0;
+      if (!mounted) return;
+      setState(() {
+        _updateRequired = required;
+        _updateDownloadUrl = downloadUrl.isNotEmpty
+            ? downloadUrl
+            : 'https://github.com/danesh1118/Levikovpn/releases/latest';
+        _updateMessage = messageText.isNotEmpty
+            ? messageText
+            : 'نسخه $latestVersion منتشر شده است. برای ادامه برنامه را به‌روزرسانی کنید.';
+        _checkingUpdate = false;
+      });
+    } catch (_) {
+      // Fail open if the config server is temporarily unavailable, so users
+      // are not locked out by a network or GitHub outage.
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
+  }
+
+  int _compareVersions(String a, String b) {
+    List<int> parts(String value) => value.split('+').first.split('.')
+        .map((part) => int.tryParse(part.replaceAll(RegExp(r'[^0-9].*'), '')) ?? 0)
+        .toList();
+    final left = parts(a);
+    final right = parts(b);
+    for (var i = 0; i < math.max(left.length, right.length); i++) {
+      final x = i < left.length ? left[i] : 0;
+      final y = i < right.length ? right[i] : 0;
+      if (x != y) return x.compareTo(y);
+    }
+    return 0;
   }
 
   Future<void> _loadFavorites() async {
@@ -411,6 +468,7 @@ class _LevikoAppState extends State<LevikoApp> {
       message = tr('در حال اتصال…', 'Connecting…');
     });
     try {
+      // Pass the original share link unchanged, including VLESS flow parameters.
       await SingBox.instance.connect(node.link);
       if (!mounted) return;
       setState(() {
@@ -461,7 +519,18 @@ class _LevikoAppState extends State<LevikoApp> {
       ),
       home: Directionality(
         textDirection: english ? TextDirection.ltr : TextDirection.rtl,
-        child: Scaffold(
+        child: _checkingUpdate
+            ? const Scaffold(
+                backgroundColor: Color(0xFF09070F),
+                body: Center(child: CircularProgressIndicator()),
+              )
+            : _updateRequired
+                ? MandatoryUpdateScreen(
+                    message: _updateMessage,
+                    downloadUrl: _updateDownloadUrl,
+                    onRetry: _checkMandatoryUpdate,
+                  )
+                : Scaffold(
           appBar: AppBar(
             backgroundColor: const Color(0xFF09070F),
             title: const Text('LEVIKO VPN',
@@ -774,9 +843,8 @@ class GlobePainter extends CustomPainter {
 }
 
 
-// Display ping at half the measured TCP latency. The real measured value is
-// retained internally for sorting/fastest-server selection.
-int? _displayPing(int? ping) => ping == null ? null : (ping / 2).round();
+// Show the measured TCP latency without scaling or changing it.
+int? _displayPing(int? ping) => ping;
 
 Color _pingColor(int? ping) {
   if (ping == null) return Colors.white38;
@@ -898,6 +966,49 @@ class _ServerPickerSheetState extends State<_ServerPickerSheet> {
       ]),
     );
   }
+}
+
+
+class MandatoryUpdateScreen extends StatelessWidget {
+  final String message;
+  final String downloadUrl;
+  final Future<void> Function() onRetry;
+  const MandatoryUpdateScreen({super.key, required this.message, required this.downloadUrl, required this.onRetry});
+
+  Future<void> _openDownload(BuildContext context) async {
+    final uri = Uri.tryParse(downloadUrl);
+    if (uri == null || !(uri.isScheme('https') || uri.isScheme('http'))) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لینک دانلود معتبر نیست.')));
+      return;
+    }
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('باز کردن لینک دانلود ممکن نشد.')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: const Color(0xFF09070F),
+    body: SafeArea(child: Center(child: Padding(
+      padding: const EdgeInsets.all(28),
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        const Icon(Icons.system_update_alt, size: 76, color: Color(0xFFC9A7FF)),
+        const SizedBox(height: 22),
+        const Text('به‌روزرسانی ضروری', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 14),
+        Text(message, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 15)),
+        const SizedBox(height: 28),
+        SizedBox(width: double.infinity, child: FilledButton.icon(
+          onPressed: () => _openDownload(context),
+          icon: const Icon(Icons.download),
+          label: const Text('دانلود نسخه جدید'),
+        )),
+        const SizedBox(height: 12),
+        TextButton(onPressed: onRetry, child: const Text('بررسی دوباره')),
+      ]),
+    ))),
+  );
 }
 
 class AnimatedGlobe extends StatefulWidget {
