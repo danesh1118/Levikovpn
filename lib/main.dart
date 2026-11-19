@@ -267,6 +267,40 @@ class _LevikoAppState extends State<LevikoApp> {
       'tr': ('ترکیه', '🇹🇷', 'Turkey'),
       'uk': ('انگلستان', '🇬🇧', 'United Kingdom'),
       'united kingdom': ('انگلستان', '🇬🇧', 'United Kingdom'),
+      'sweden': ('سوئد', '🇸🇪', 'Sweden'), 'se': ('سوئد', '🇸🇪', 'Sweden'),
+      'switzerland': ('سوئیس', '🇨🇭', 'Switzerland'), 'ch': ('سوئیس', '🇨🇭', 'Switzerland'),
+      'albania': ('آلبانی', '🇦🇱', 'Albania'), 'al': ('آلبانی', '🇦🇱', 'Albania'),
+      'georgia': ('گرجستان', '🇬🇪', 'Georgia'), 'ge': ('گرجستان', '🇬🇪', 'Georgia'),
+      'spain': ('اسپانیا', '🇪🇸', 'Spain'), 'es': ('اسپانیا', '🇪🇸', 'Spain'),
+      'italy': ('ایتالیا', '🇮🇹', 'Italy'), 'it': ('ایتالیا', '🇮🇹', 'Italy'),
+      'poland': ('لهستان', '🇵🇱', 'Poland'), 'pl': ('لهستان', '🇵🇱', 'Poland'),
+      'austria': ('اتریش', '🇦🇹', 'Austria'), 'at': ('اتریش', '🇦🇹', 'Austria'),
+      'belgium': ('بلژیک', '🇧🇪', 'Belgium'), 'be': ('بلژیک', '🇧🇪', 'Belgium'),
+      'canada': ('کانادا', '🇨🇦', 'Canada'), 'ca': ('کانادا', '🇨🇦', 'Canada'),
+      'japan': ('ژاپن', '🇯🇵', 'Japan'), 'jp': ('ژاپن', '🇯🇵', 'Japan'),
+      'singapore': ('سنگاپور', '🇸🇬', 'Singapore'), 'sg': ('سنگاپور', '🇸🇬', 'Singapore'),
+      'romania': ('رومانی', '🇷🇴', 'Romania'), 'ro': ('رومانی', '🇷🇴', 'Romania'),
+      'bulgaria': ('بلغارستان', '🇧🇬', 'Bulgaria'), 'bg': ('بلغارستان', '🇧🇬', 'Bulgaria'),
+      'ukraine': ('اوکراین', '🇺🇦', 'Ukraine'), 'ua': ('اوکراین', '🇺🇦', 'Ukraine'),
+      'russia': ('روسیه', '🇷🇺', 'Russia'), 'ru': ('روسیه', '🇷🇺', 'Russia'),
+      'denmark': ('دانمارک', '🇩🇰', 'Denmark'), 'dk': ('دانمارک', '🇩🇰', 'Denmark'),
+      'norway': ('نروژ', '🇳🇴', 'Norway'), 'no': ('نروژ', '🇳🇴', 'Norway'),
+      'iceland': ('ایسلند', '🇮🇸', 'Iceland'), 'is': ('ایسلند', '🇮🇸', 'Iceland'),
+      'ireland': ('ایرلند', '🇮🇪', 'Ireland'), 'ie': ('ایرلند', '🇮🇪', 'Ireland'),
+      'czech': ('چک', '🇨🇿', 'Czechia'), 'czechia': ('چک', '🇨🇿', 'Czechia'), 'cz': ('چک', '🇨🇿', 'Czechia'),
+      'greece': ('یونان', '🇬🇷', 'Greece'), 'gr': ('یونان', '🇬🇷', 'Greece'),
+      'portugal': ('پرتغال', '🇵🇹', 'Portugal'), 'pt': ('پرتغال', '🇵🇹', 'Portugal'),
+      'brazil': ('برزیل', '🇧🇷', 'Brazil'), 'br': ('برزیل', '🇧🇷', 'Brazil'),
+      'australia': ('استرالیا', '🇦🇺', 'Australia'), 'au': ('استرالیا', '🇦🇺', 'Australia'),
+      'india': ('هند', '🇮🇳', 'India'), 'in': ('هند', '🇮🇳', 'India'),
+      'hong kong': ('هنگ‌کنگ', '🇭🇰', 'Hong Kong'),
+      'south korea': ('کره جنوبی', '🇰🇷', 'South Korea'), 'korea': ('کره جنوبی', '🇰🇷', 'South Korea'),
+      'mexico': ('مکزیک', '🇲🇽', 'Mexico'), 'mx': ('مکزیک', '🇲🇽', 'Mexico'),
+      'argentina': ('آرژانتین', '🇦🇷', 'Argentina'), 'ar': ('آرژانتین', '🇦🇷', 'Argentina'),
+      'uae': ('امارات', '🇦🇪', 'United Arab Emirates'), 'united arab emirates': ('امارات', '🇦🇪', 'United Arab Emirates'),
+      'saudi arabia': ('عربستان', '🇸🇦', 'Saudi Arabia'), 'sa': ('عربستان', '🇸🇦', 'Saudi Arabia'),
+      'israel': ('اسرائیل', '🇮🇱', 'Israel'), 'il': ('اسرائیل', '🇮🇱', 'Israel'),
+      'south africa': ('آفریقای جنوبی', '🇿🇦', 'South Africa'), 'za': ('آفریقای جنوبی', '🇿🇦', 'South Africa'),
     };
     for (final entry in countries.entries) {
       if (RegExp(r'(^|[^a-z])' + RegExp.escape(entry.key) + r'([^a-z]|$)')
@@ -328,165 +362,35 @@ class _LevikoAppState extends State<LevikoApp> {
     return '${value.toStringAsFixed(0)} B/s';
   }
 
-  void _openLocations() {
+  Future<void> _openLocations() async {
     if (nodes.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(tr('هنوز سروری دریافت نشده است؛ کمی بعد دوباره امتحان کن.',
-            'No servers have loaded yet. Please try again shortly.')),
+        content: Text(loading
+            ? tr('در حال دریافت سرورها هستیم؛ چند لحظه صبر کن.', 'Servers are still loading; please wait a moment.')
+            : tr('سروری دریافت نشده؛ دکمه تازه‌سازی را بزن.', 'No servers loaded. Please refresh.')),
       ));
       return;
     }
-
-    String query = '';
-    bool onlyFavorites = false;
-    showDialog<void>(
-      context: context,
-      barrierDismissible: true,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, dialogSetState) {
-          final filtered = nodes.where((n) {
-            final q = query.trim().toLowerCase();
-            final matches = q.isEmpty ||
-                _cityLabel(n).toLowerCase().contains(q) ||
-                n.location.toLowerCase().contains(q) ||
-                n.countryCode.toLowerCase().contains(q);
-            return matches && (!onlyFavorites || n.favorite);
-          }).toList();
-
-          return Dialog(
-            backgroundColor: const Color(0xFF15111E),
-            insetPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 24),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-            child: SizedBox(
-              height: MediaQuery.of(dialogContext).size.height * .78,
-              child: Column(children: [
-                const SizedBox(height: 14),
-                Container(width: 42, height: 4,
-                    decoration: BoxDecoration(color: Colors.white30,
-                        borderRadius: BorderRadius.circular(8))),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 16, 12, 12),
-                  child: Row(children: [
-                    const Icon(Icons.public, color: Color(0xFFC9A7FF)),
-                    const SizedBox(width: 9),
-                    Expanded(child: Text(tr('انتخاب سرور', 'Choose a server'),
-                        style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold))),
-                    Text('${nodes.length}', style: const TextStyle(color: Colors.white60)),
-                    IconButton(
-                      tooltip: tr('بستن', 'Close'),
-                      onPressed: () => Navigator.of(dialogContext).pop(),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ]),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: TextField(
-                    onChanged: (v) => dialogSetState(() => query = v),
-                    decoration: InputDecoration(
-                      prefixIcon: const Icon(Icons.search),
-                      hintText: tr('جستجوی کشور یا شهر', 'Search city or country'),
-                      filled: true,
-                      fillColor: const Color(0xFF211A2B),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(15),
-                          borderSide: BorderSide.none),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
-                  child: Row(children: [
-                    ChoiceChip(
-                      label: Text(tr('همه سرورها', 'All servers')),
-                      selected: !onlyFavorites,
-                      onSelected: (_) => dialogSetState(() => onlyFavorites = false),
-                    ),
-                    const SizedBox(width: 8),
-                    ChoiceChip(
-                      avatar: const Icon(Icons.star, size: 15),
-                      label: Text(tr('علاقه‌مندی‌ها', 'Favorites')),
-                      selected: onlyFavorites,
-                      onSelected: (_) => dialogSetState(() => onlyFavorites = true),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      tooltip: tr('تازه‌سازی', 'Refresh'),
-                      onPressed: () { Navigator.of(dialogContext).pop(); loadSubscription(); },
-                      icon: const Icon(Icons.refresh, color: Color(0xFFC9A7FF)),
-                    ),
-                  ]),
-                ),
-                const Divider(height: 1, color: Color(0xFF34283F)),
-                Expanded(
-                  child: filtered.isEmpty
-                      ? Center(child: Text(
-                          onlyFavorites
-                              ? tr('هنوز سرور محبوبی ذخیره نکرده‌ای.', 'No favorite servers yet.')
-                              : tr('سروری با این نام پیدا نشد.', 'No matching servers found.'),
-                          style: const TextStyle(color: Colors.white60)))
-                      : ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-                          itemCount: filtered.length + 1,
-                          itemBuilder: (itemContext, index) {
-                            if (index == 0) {
-                              final pings = nodes.map((e) => e.pingMs).whereType<int>().toList();
-                              final best = pings.isEmpty ? null : pings.reduce(math.min);
-                              return _serverTile(
-                                flag: '⚡',
-                                title: tr('سریع‌ترین سرور', 'Fastest server'),
-                                subtitle: tr('اتصال به کمترین پینگ', 'Connect to lowest latency'),
-                                ping: best,
-                                selectedTile: false,
-                                onTap: () {
-                                  Navigator.of(dialogContext).pop();
-                                  fastest();
-                                },
-                              );
-                            }
-                            final n = filtered[index - 1];
-                            final isSelected = selected != null && _nodeKey(selected!) == _nodeKey(n);
-                            return Card(
-                              color: isSelected ? const Color(0xFF28163D) : const Color(0xFF15121B),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(15),
-                                side: BorderSide(color: isSelected
-                                    ? const Color(0xFF9B5CFF) : const Color(0xFF292331)),
-                              ),
-                              child: ListTile(
-                                onTap: () {
-                                  setState(() { selected = n; });
-                                  Navigator.of(dialogContext).pop();
-                                },
-                                leading: Text(n.flag, style: const TextStyle(fontSize: 25)),
-                                title: Text(_cityLabel(n), style: const TextStyle(fontWeight: FontWeight.bold)),
-                                subtitle: Text(n.location.isEmpty
-                                    ? tr('در حال تشخیص موقعیت…', 'Detecting location…')
-                                    : n.location,
-                                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(color: Colors.white54, fontSize: 11)),
-                                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                                  Text(n.pingMs == null ? '—' : '${n.pingMs} ms',
-                                      style: const TextStyle(color: Color(0xFF79E6B5), fontWeight: FontWeight.bold)),
-                                  IconButton(
-                                    onPressed: () async {
-                                      await _toggleFavorite(n);
-                                      dialogSetState(() {});
-                                    },
-                                    icon: Icon(n.favorite ? Icons.star : Icons.star_border,
-                                        color: n.favorite ? Colors.amber : Colors.white54),
-                                  ),
-                                ]),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ]),
-            ),
-          );
-        },
+    final result = await Navigator.of(context, rootNavigator: true).push<Node>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => ServerPickerPage(
+          nodes: List<Node>.unmodifiable(nodes),
+          selectedKey: selected == null ? null : _nodeKey(selected!),
+          english: english,
+          onFavorite: _toggleFavorite,
+          onRefresh: () async { await loadSubscription(); },
+        ),
       ),
     );
+    if (!mounted || result == null) return;
+    setState(() {
+      selected = nodes.firstWhere(
+        (n) => _nodeKey(n) == _nodeKey(result),
+        orElse: () => result,
+      );
+      message = tr('کانفیگ انتخاب شد؛ برای اتصال دکمه اتصال را بزن.', 'Server selected. Press Connect to connect.');
+    });
   }
 
   Future<int?> _tcpPing(String host, int port) async {
@@ -661,34 +565,58 @@ class _LevikoAppState extends State<LevikoApp> {
                         const SizedBox(height: 26),
                         _sectionTitle(tr('موقعیت اتصال', 'Connection location')),
                         const SizedBox(height: 10),
-                        Card(
-                          color: const Color(0xFF171020),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18),
-                            side: const BorderSide(color: Color(0xFF493064))),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(18),
-                            onTap: _openLocations,
+                        if (selected != null)
+                          Card(
+                            color: const Color(0xFF171020),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18),
+                              side: const BorderSide(color: Color(0xFF493064))),
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
                               child: Row(children: [
-                                const CircleAvatar(backgroundColor: Color(0xFF2A1A3C),
-                                  child: Icon(Icons.public, color: Color(0xFFC9A7FF))),
+                                Text(selected!.flag, style: const TextStyle(fontSize: 25)),
                                 const SizedBox(width: 12),
                                 Expanded(child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Text(selected == null ? tr('انتخاب سرور', 'Choose server') : _cityLabel(selected!),
+                                    Text(selected!.name.isEmpty ? tr('سرور انتخاب‌شده', 'Selected server') : selected!.name,
+                                      maxLines: 1, overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(fontWeight: FontWeight.bold)),
-                                    Text(tr('برای دیدن و انتخاب سرورها لمس کنید', 'Tap to browse and select servers'),
-                                      style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                                    const SizedBox(height: 3),
+                                    Text('${selected!.location}${selected!.city.isNotEmpty ? ' • ${selected!.city}' : ''}',
+                                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(color: Colors.white54, fontSize: 11)),
                                   ],
                                 )),
-                                const Icon(Icons.keyboard_arrow_down, color: Color(0xFFC9A7FF)),
+                                Text(selected!.pingMs == null ? '—' : '${selected!.pingMs} ms',
+                                  style: const TextStyle(color: Color(0xFF79E6B5), fontWeight: FontWeight.bold)),
                               ]),
                             ),
                           ),
-                        ),
+                        const SizedBox(height: 10),
+                        Row(children: [
+                          Expanded(child: OutlinedButton.icon(
+                            onPressed: nodes.isEmpty || busy ? null : fastest,
+                            icon: const Icon(Icons.bolt_rounded),
+                            label: Text(tr('سریع‌ترین لوکیشن', 'Fastest location')),
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size.fromHeight(52),
+                              foregroundColor: const Color(0xFFC9A7FF),
+                              side: const BorderSide(color: Color(0xFF8B42E8)),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                            ),
+                          )),
+                          const SizedBox(width: 10),
+                          Expanded(child: FilledButton.icon(
+                            onPressed: _openLocations,
+                            icon: const Icon(Icons.public_rounded),
+                            label: Text(tr('دیدن کانفیگ‌ها', 'Browse servers')),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size.fromHeight(52),
+                              backgroundColor: const Color(0xFF6F35C7),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                            ),
+                          )),
+                        ]),
                         const SizedBox(height: 14),
                         Row(children: [
                           Expanded(child: _statCard(Icons.arrow_downward, tr('دریافت', 'Download'),
@@ -797,6 +725,115 @@ class _LevikoAppState extends State<LevikoApp> {
           ],
         ),
       ),
+    );
+  }
+}
+
+
+class ServerPickerPage extends StatefulWidget {
+  final List<Node> nodes;
+  final String? selectedKey;
+  final bool english;
+  final Future<void> Function(Node) onFavorite;
+  final Future<void> Function() onRefresh;
+  const ServerPickerPage({super.key, required this.nodes, required this.selectedKey,
+    required this.english, required this.onFavorite, required this.onRefresh});
+  @override
+  State<ServerPickerPage> createState() => _ServerPickerPageState();
+}
+
+class _ServerPickerPageState extends State<ServerPickerPage> {
+  final TextEditingController search = TextEditingController();
+  bool favoritesOnly = false;
+  bool get en => widget.english;
+  String tr(String fa, String english) => en ? english : fa;
+
+  @override
+  void dispose() { search.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) {
+    final q = search.text.trim().toLowerCase();
+    final filtered = widget.nodes.where((n) {
+      final matches = q.isEmpty || n.name.toLowerCase().contains(q) ||
+          n.location.toLowerCase().contains(q) || n.city.toLowerCase().contains(q) ||
+          n.countryCode.toLowerCase().contains(q);
+      return matches && (!favoritesOnly || n.favorite);
+    }).toList();
+    return Scaffold(
+      backgroundColor: const Color(0xFF09070F),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF151020),
+        title: Text(tr('انتخاب کانفیگ', 'Select configuration')),
+        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
+      ),
+      body: Column(children: [
+        Padding(padding: const EdgeInsets.fromLTRB(14, 14, 14, 8), child: TextField(
+          controller: search,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            hintText: tr('جستجوی اسم کانفیگ یا کشور', 'Search config name or country'),
+            prefixIcon: const Icon(Icons.search), filled: true,
+            fillColor: const Color(0xFF1A1422),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+          ),
+        )),
+        Padding(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4), child: Row(children: [
+          ChoiceChip(label: Text(tr('همه', 'All')), selected: !favoritesOnly,
+            onSelected: (_) => setState(() => favoritesOnly = false)),
+          const SizedBox(width: 8),
+          ChoiceChip(label: Text(tr('علاقه‌مندی‌ها', 'Favorites')), selected: favoritesOnly,
+            onSelected: (_) => setState(() => favoritesOnly = true)),
+          const Spacer(),
+          Text('${filtered.length} / ${widget.nodes.length}', style: const TextStyle(color: Colors.white60)),
+        ])),
+        Expanded(child: filtered.isEmpty
+          ? Center(child: Text(tr('کانفیگی پیدا نشد', 'No configurations found'), style: const TextStyle(color: Colors.white60)))
+          : ListView.separated(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+            itemCount: filtered.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 7),
+            itemBuilder: (context, i) {
+              final n = filtered[i];
+              final selected = widget.selectedKey == '${n.host}:${n.port}';
+              final place = [n.location, if (n.city.isNotEmpty) n.city].where((x) => x.trim().isNotEmpty).join(' • ');
+              return Material(
+                color: selected ? const Color(0xFF29183D) : const Color(0xFF17121E),
+                borderRadius: BorderRadius.circular(16),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () => Navigator.of(context).pop(n),
+                  child: Padding(padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12), child: Row(children: [
+                    Text(n.flag, style: const TextStyle(fontSize: 26)),
+                    const SizedBox(width: 12),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(n.name.isEmpty ? tr('کانفیگ بدون نام', 'Unnamed configuration') : n.name,
+                        maxLines: 2, overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 4),
+                      Text(place.isEmpty ? tr('موقعیت از روی نام مشخص نشد', 'Location not found in config name') : place,
+                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                    ])),
+                    const SizedBox(width: 8),
+                    Column(mainAxisSize: MainAxisSize.min, children: [
+                      Text(n.pingMs == null ? '—' : '${n.pingMs} ms',
+                        style: const TextStyle(color: Color(0xFF79E6B5), fontWeight: FontWeight.bold, fontSize: 12)),
+                      Icon(selected ? Icons.check_circle : Icons.circle_outlined,
+                        color: selected ? const Color(0xFFC9A7FF) : Colors.white24, size: 17),
+                    ]),
+                    IconButton(
+                      tooltip: tr('علاقه‌مندی', 'Favorite'),
+                      onPressed: () async { await widget.onFavorite(n); if (mounted) setState(() {}); },
+                      icon: Icon(n.favorite ? Icons.star : Icons.star_border,
+                        color: n.favorite ? Colors.amber : Colors.white54),
+                    ),
+                  ])),
+                ),
+              );
+            },
+          )),
+      ]),
     );
   }
 }
