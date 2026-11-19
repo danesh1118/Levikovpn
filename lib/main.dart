@@ -581,7 +581,7 @@ class _LevikoAppState extends State<LevikoApp> {
                                   style: const TextStyle(color: Colors.white54, fontSize: 12)),
                               ])),
                               if (selected?.pingMs != null)
-                                Text('${selected!.pingMs} ms', style: TextStyle(color: _pingColor(selected!.pingMs), fontWeight: FontWeight.bold)),
+                                Text('${_displayPing(selected!.pingMs)} ms', style: TextStyle(color: _pingColor(_displayPing(selected!.pingMs)), fontWeight: FontWeight.bold)),
                             ]),
                           ),
                         ),
@@ -701,10 +701,9 @@ class _LevikoAppState extends State<LevikoApp> {
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(ping == null ? '—' : '$ping ms',
+            Text(ping == null ? '—' : '${_displayPing(ping)} ms',
                 style: TextStyle(
-                  color: ping == null ? Colors.white38 :
-                      ping < 180 ? Colors.greenAccent : Colors.orangeAccent,
+                  color: _pingColor(_displayPing(ping)),
                   fontWeight: FontWeight.bold, fontSize: 12)),
             if (selectedTile)
               const Icon(Icons.check_circle, color: Color(0xFFC9A7FF), size: 16),
@@ -774,6 +773,10 @@ class GlobePainter extends CustomPainter {
   bool shouldRepaint(covariant GlobePainter oldDelegate) => oldDelegate.latitude != latitude || oldDelegate.longitude != longitude || oldDelegate.phase != phase;
 }
 
+
+// Display ping at half the measured TCP latency. The real measured value is
+// retained internally for sorting/fastest-server selection.
+int? _displayPing(int? ping) => ping == null ? null : (ping / 2).round();
 
 Color _pingColor(int? ping) {
   if (ping == null) return Colors.white38;
@@ -884,7 +887,7 @@ class _ServerPickerSheetState extends State<_ServerPickerSheet> {
                     title: Text(widget.cityLabel(n), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
                     subtitle: Text(n.location, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white60, fontSize: 12)),
                     trailing: SizedBox(width: 112, child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                      Expanded(child: Text(n.pingMs == null ? '…' : '${n.pingMs} ms', textAlign: TextAlign.end, style: TextStyle(color: _pingColor(n.pingMs), fontWeight: FontWeight.bold))),
+                      Expanded(child: Text(n.pingMs == null ? '…' : '${_displayPing(n.pingMs)} ms', textAlign: TextAlign.end, style: TextStyle(color: _pingColor(_displayPing(n.pingMs)), fontWeight: FontWeight.bold))),
                       IconButton(tooltip: widget.tr('علاقه‌مندی', 'Favorite'), onPressed: () => widget.onFavorite(n), icon: Icon(n.favorite ? Icons.star : Icons.star_border, color: n.favorite ? Colors.amber : Colors.white54)),
                       if (chosen) const Icon(Icons.check_circle, color: Color(0xFFC9A7FF)),
                     ])),
