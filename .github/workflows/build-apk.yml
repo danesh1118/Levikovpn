@@ -6,10 +6,12 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,48 +37,29 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-
           manifest = Path("android/app/src/main/AndroidManifest.xml")
-          if not manifest.is_file():
-              raise SystemExit(f"Manifest not found: {manifest}")
-
           text = manifest.read_text(encoding="utf-8")
-          app_match = re.search(r"<application\b[^>]*>", text, flags=re.IGNORECASE | re.DOTALL)
-          if app_match is None:
-              print("Manifest content:")
-              print(text)
-              raise SystemExit("Could not find <application> element")
-
-          app_tag = app_match.group(0)
-          label_pattern = r'\bandroid:label\s*=\s*"[^"]*"'
-          if re.search(label_pattern, app_tag):
-              updated_tag = re.sub(
-                  label_pattern,
-                  'android:label="Leviko VPN"',
-                  app_tag,
-                  count=1
-              )
+          match = re.search(r"<application\\b[^>]*>", text, flags=re.I | re.S)
+          if not match:
+              raise SystemExit("Could not find <application> in AndroidManifest.xml")
+          tag = match.group(0)
+          label = r'\\bandroid:label\\s*=\\s*"[^"]*"'
+          if re.search(label, tag):
+              tag = re.sub(label, 'android:label="Leviko VPN"', tag, count=1)
           else:
-              updated_tag = app_tag[:-1] + ' android:label="Leviko VPN">'
-
-          updated_text = text[:app_match.start()] + updated_tag + text[app_match.end():]
-          manifest.write_text(updated_text, encoding="utf-8")
-          print("App display name set to Leviko VPN")
+              tag = tag[:-1] + ' android:label="Leviko VPN">'
+          manifest.write_text(text[:match.start()] + tag + text[match.end():], encoding="utf-8")
           PY
 
-      - name: Check App Icon File
-        run: |
-          if [ ! -f assets/icon/app_icon.png ]; then
-            echo "ERROR: Logo file is missing."
-            echo "Upload your PNG logo to: assets/icon/app_icon.png"
-            exit 1
-          fi
+      - name: Verify App Icon
+        run: test -s assets/icon/app_icon.png
 
-      - name: Install Icon Generator
-        run: flutter pub add --dev flutter_launcher_icons
+      - name: Install Dependencies
+        run: flutter pub get
 
-      - name: Configure Launcher Icon
+      - name: Generate Launcher Icons
         run: |
+          dart pub global activate flutter_launcher_icons
           cat > flutter_launcher_icons.yaml <<'YAML'
           flutter_launcher_icons:
             android: true
@@ -84,19 +67,37 @@ jobs:
             image_path: "assets/icon/app_icon.png"
             min_sdk_android: 21
           YAML
+          dart pub global run flutter_launcher_icons -f flutter_launcher_icons.yaml
 
-      - name: Generate Android Launcher Icons
-        run: dart run flutter_launcher_icons -f flutter_launcher_icons.yaml
-
-      - name: Install Dependencies
-        run: flutter pub get
-
-      - name: Build APK
+      - name: Build Release APK
         run: flutter build apk --release
 
-      - name: Upload APK
+      - name: Prepare APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk leviko-vpn.apk
+
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: LEVIKO-VPN-APK
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: leviko-vpn.apk
           if-no-files-found: error
+          retention-days: 30
+
+      - name: Read App Version
+        id: app_version
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/^version: *\\([^+ ]*\\).*/\\1/p' pubspec.yaml)
+          if [ -z "$VERSION" ]; then echo "Could not read version from pubspec.yaml"; exit 1; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.app_version.outputs.tag }}
+          name: Leviko VPN ${{ steps.app_version.outputs.version }}
+          body: "نسخه انتشار‌یافته Leviko VPN"
+          files: leviko-vpn.apk
+          overwrite_files: true
+          make_latest: true
