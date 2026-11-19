@@ -1,46 +1,74 @@
 name: Build LEVIKO VPN APK
 
 on:
-workflow_dispatch:
-push:
-branches:
-- main
+  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
-build:
-runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-latest
 
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  - name: Setup Java
-    uses: actions/setup-java@v4
-    with:
-      distribution: temurin
-      java-version: '17'
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-  - name: Setup Flutter
-    uses: subosito/flutter-action@v2
-    with:
-      channel: stable
-      cache: true
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
 
-  - name: Create Android Project
-    run: flutter create . --platforms=android --org com.leviko.vpn
+      - name: Create Android Project
+        run: flutter create . --platforms=android --org com.leviko.vpn
 
-  - name: Set App Name
-    run: sed -i 's/android:label="[^"]*"/android:label="Leviko VPN"/' android/app/src/main/AndroidManifest.xml
+      - name: Set Android App Display Name
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
 
-  - name: Install Dependencies
-    run: flutter pub get
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          if not manifest.exists():
+              raise SystemExit(f"Manifest not found: {manifest}")
 
-  - name: Build APK
-    run: flutter build apk --release
+          text = manifest.read_text(encoding="utf-8")
+          app_tag = re.search(r"<application\b[^>]*>", text, flags=re.DOTALL)
+          if not app_tag:
+              raise SystemExit("Could not find <application> tag in AndroidManifest.xml")
 
-  - name: Upload APK
-    uses: actions/upload-artifact@v4
-    with:
-      name: LEVIKO-VPN-APK
-      path: build/app/outputs/flutter-apk/app-release.apk
-      if-no-files-found: error
+          tag = app_tag.group(0)
+          if re.search(r'\bandroid:label\s*=', tag):
+              new_tag = re.sub(
+                  r'android:label\s*=\s*"[^"]*"',
+                  'android:label="Leviko VPN"',
+                  tag,
+                  count=1
+              )
+          else:
+              new_tag = tag[:-1] + ' android:label="Leviko VPN">'
+          text = text[:app_tag.start()] + new_tag + text[app_tag.end():]
+          manifest.write_text(text, encoding="utf-8")
+          print("Android app display name set to Leviko VPN")
+          PY
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LEVIKO-VPN-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
