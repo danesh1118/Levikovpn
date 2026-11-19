@@ -329,50 +329,163 @@ class _LevikoAppState extends State<LevikoApp> {
   }
 
   void _openLocations() {
-    final snapshot = List<Node>.from(nodes);
-    showModalBottomSheet<void>(
-      context: context, isScrollControlled: true, backgroundColor: const Color(0xFF15111E),
-      useSafeArea: true, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
-      builder: (sheetContext) {
-        String query = '';
-        bool onlyFavorites = false;
-        return StatefulBuilder(builder: (context, sheetSetState) {
-          final filtered = snapshot.where((n) {
-            final matches = query.isEmpty || _cityLabel(n).toLowerCase().contains(query.toLowerCase()) || n.location.toLowerCase().contains(query.toLowerCase()) || n.countryCode.toLowerCase().contains(query.toLowerCase());
+    if (nodes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(tr('هنوز سروری دریافت نشده است؛ کمی بعد دوباره امتحان کن.',
+            'No servers have loaded yet. Please try again shortly.')),
+      ));
+      return;
+    }
+
+    String query = '';
+    bool onlyFavorites = false;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, dialogSetState) {
+          final filtered = nodes.where((n) {
+            final q = query.trim().toLowerCase();
+            final matches = q.isEmpty ||
+                _cityLabel(n).toLowerCase().contains(q) ||
+                n.location.toLowerCase().contains(q) ||
+                n.countryCode.toLowerCase().contains(q);
             return matches && (!onlyFavorites || n.favorite);
           }).toList();
-          return SizedBox(height: MediaQuery.of(context).size.height * .82, child: Column(children: [
-            const SizedBox(height: 12), Container(width: 44, height: 4, decoration: BoxDecoration(color: Colors.white30, borderRadius: BorderRadius.circular(8))),
-            Padding(padding: const EdgeInsets.fromLTRB(18,18,18,10), child: Row(children: [
-              const Icon(Icons.public, color: Color(0xFFC9A7FF)), const SizedBox(width: 10),
-              Text(tr('انتخاب موقعیت', 'Choose location'), style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold)), const Spacer(), Text('${snapshot.length} ${tr('سرور','servers')}', style: const TextStyle(color: Colors.white54)),
-            ])),
-            Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: TextField(
-              onChanged: (v) => sheetSetState(() => query = v),
-              decoration: InputDecoration(prefixIcon: const Icon(Icons.search), hintText: tr('جستجوی کشور یا شهر…','Search country or city…'), filled: true, fillColor: const Color(0xFF211A2B), border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none)),
-            )),
-            Padding(padding: const EdgeInsets.fromLTRB(16,10,16,8), child: Row(children: [
-              FilterChip(label: Text(tr('همه سرورها','All servers')), selected: !onlyFavorites, onSelected: (_) => sheetSetState(() => onlyFavorites = false)),
-              const SizedBox(width: 8), FilterChip(avatar: const Icon(Icons.star, size: 16), label: Text(tr('علاقه‌مندی‌ها','Favorites')), selected: onlyFavorites, onSelected: (_) => sheetSetState(() => onlyFavorites = true)),
-              const Spacer(), TextButton.icon(onPressed: () { Navigator.pop(context); loadSubscription(); }, icon: const Icon(Icons.refresh, size: 17), label: Text(tr('تازه‌سازی','Refresh'))),
-            ])),
-            Expanded(child: filtered.isEmpty ? Center(child: Text(snapshot.isEmpty ? tr('هنوز سروری دریافت نشده؛ اتصال اینترنت و سابسکریپشن را بررسی کن.','No servers loaded yet. Check your connection and subscription.') : tr('موردی پیدا نشد','No matches found'), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white60))) : ListView.builder(
-              padding: const EdgeInsets.fromLTRB(14,0,14,20), itemCount: filtered.length + 1,
-              itemBuilder: (context, index) {
-                if (index == 0) return Padding(padding: const EdgeInsets.only(bottom: 8), child: _serverTile(flag: '⚡', title: tr('سریع‌ترین سرور','Fastest server'), subtitle: tr('اتصال به کمترین پینگ','Connect to lowest latency'), ping: nodes.map((e) => e.pingMs).whereType<int>().fold<int?>(null,(a,b) => a == null || b < a ? b : a), selectedTile: false, onTap: () { Navigator.pop(context); fastest(); }));
-                final n = filtered[index - 1];
-                return Card(color: selected != null && _nodeKey(selected!) == _nodeKey(n) ? const Color(0xFF28163D) : const Color(0xFF15121B), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15), side: BorderSide(color: selected != null && _nodeKey(selected!) == _nodeKey(n) ? const Color(0xFF9B5CFF) : const Color(0xFF292331))), child: ListTile(
-                  onTap: () { setState(() => selected = n); Navigator.pop(context); },
-                  leading: Text(n.flag, style: const TextStyle(fontSize: 25)),
-                  title: Text(_cityLabel(n), style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text(n.location.isEmpty ? tr('در حال تشخیص موقعیت…','Detecting location…') : n.location, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white54, fontSize: 11)),
-                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(n.pingMs == null ? '—' : '${n.pingMs} ms', style: const TextStyle(color: Color(0xFF79E6B5), fontWeight: FontWeight.bold)), IconButton(onPressed: () { _toggleFavorite(n); sheetSetState(() {}); }, icon: Icon(n.favorite ? Icons.star : Icons.star_border, color: n.favorite ? Colors.amber : Colors.white54))]),
-                ));
-              },
-            )),
-          ]));
-        });
-      },
+
+          return Dialog(
+            backgroundColor: const Color(0xFF15111E),
+            insetPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 24),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            child: SizedBox(
+              height: MediaQuery.of(dialogContext).size.height * .78,
+              child: Column(children: [
+                const SizedBox(height: 14),
+                Container(width: 42, height: 4,
+                    decoration: BoxDecoration(color: Colors.white30,
+                        borderRadius: BorderRadius.circular(8))),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 16, 12, 12),
+                  child: Row(children: [
+                    const Icon(Icons.public, color: Color(0xFFC9A7FF)),
+                    const SizedBox(width: 9),
+                    Expanded(child: Text(tr('انتخاب سرور', 'Choose a server'),
+                        style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold))),
+                    Text('${nodes.length}', style: const TextStyle(color: Colors.white60)),
+                    IconButton(
+                      tooltip: tr('بستن', 'Close'),
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ]),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: TextField(
+                    onChanged: (v) => dialogSetState(() => query = v),
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(Icons.search),
+                      hintText: tr('جستجوی کشور یا شهر', 'Search city or country'),
+                      filled: true,
+                      fillColor: const Color(0xFF211A2B),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(15),
+                          borderSide: BorderSide.none),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+                  child: Row(children: [
+                    ChoiceChip(
+                      label: Text(tr('همه سرورها', 'All servers')),
+                      selected: !onlyFavorites,
+                      onSelected: (_) => dialogSetState(() => onlyFavorites = false),
+                    ),
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      avatar: const Icon(Icons.star, size: 15),
+                      label: Text(tr('علاقه‌مندی‌ها', 'Favorites')),
+                      selected: onlyFavorites,
+                      onSelected: (_) => dialogSetState(() => onlyFavorites = true),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: tr('تازه‌سازی', 'Refresh'),
+                      onPressed: () { Navigator.of(dialogContext).pop(); loadSubscription(); },
+                      icon: const Icon(Icons.refresh, color: Color(0xFFC9A7FF)),
+                    ),
+                  ]),
+                ),
+                const Divider(height: 1, color: Color(0xFF34283F)),
+                Expanded(
+                  child: filtered.isEmpty
+                      ? Center(child: Text(
+                          onlyFavorites
+                              ? tr('هنوز سرور محبوبی ذخیره نکرده‌ای.', 'No favorite servers yet.')
+                              : tr('سروری با این نام پیدا نشد.', 'No matching servers found.'),
+                          style: const TextStyle(color: Colors.white60)))
+                      : ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+                          itemCount: filtered.length + 1,
+                          itemBuilder: (itemContext, index) {
+                            if (index == 0) {
+                              final pings = nodes.map((e) => e.pingMs).whereType<int>().toList();
+                              final best = pings.isEmpty ? null : pings.reduce(math.min);
+                              return _serverTile(
+                                flag: '⚡',
+                                title: tr('سریع‌ترین سرور', 'Fastest server'),
+                                subtitle: tr('اتصال به کمترین پینگ', 'Connect to lowest latency'),
+                                ping: best,
+                                selectedTile: false,
+                                onTap: () {
+                                  Navigator.of(dialogContext).pop();
+                                  fastest();
+                                },
+                              );
+                            }
+                            final n = filtered[index - 1];
+                            final isSelected = selected != null && _nodeKey(selected!) == _nodeKey(n);
+                            return Card(
+                              color: isSelected ? const Color(0xFF28163D) : const Color(0xFF15121B),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(15),
+                                side: BorderSide(color: isSelected
+                                    ? const Color(0xFF9B5CFF) : const Color(0xFF292331)),
+                              ),
+                              child: ListTile(
+                                onTap: () {
+                                  setState(() { selected = n; });
+                                  Navigator.of(dialogContext).pop();
+                                },
+                                leading: Text(n.flag, style: const TextStyle(fontSize: 25)),
+                                title: Text(_cityLabel(n), style: const TextStyle(fontWeight: FontWeight.bold)),
+                                subtitle: Text(n.location.isEmpty
+                                    ? tr('در حال تشخیص موقعیت…', 'Detecting location…')
+                                    : n.location,
+                                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                                  Text(n.pingMs == null ? '—' : '${n.pingMs} ms',
+                                      style: const TextStyle(color: Color(0xFF79E6B5), fontWeight: FontWeight.bold)),
+                                  IconButton(
+                                    onPressed: () async {
+                                      await _toggleFavorite(n);
+                                      dialogSetState(() {});
+                                    },
+                                    icon: Icon(n.favorite ? Icons.star : Icons.star_border,
+                                        color: n.favorite ? Colors.amber : Colors.white54),
+                                  ),
+                                ]),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ]),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -475,39 +588,74 @@ class _LevikoAppState extends State<LevikoApp> {
                     child: ListView(
                       padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
                       children: [
-                        const SizedBox(height: 12),
-                        SizedBox(height: 190, child: Stack(alignment: Alignment.center, children: [
-                          Positioned.fill(child: AnimatedGlobe(latitude: selected?.latitude, longitude: selected?.longitude)),
-                          Container(width: 86, height: 86, decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xAA1A1028), border: Border.all(color: const Color(0xFF9B5CFF), width: 2), boxShadow: const [BoxShadow(color: Color(0x669B5CFF), blurRadius: 32, spreadRadius: 5)]), child: const Icon(Icons.shield_rounded, size: 42, color: Color(0xFFC9A7FF))),
-                        ])),
-                        const SizedBox(height: 18),
-                        Center(child: Text(stateText,
-                            style: const TextStyle(fontSize: 20,
-                                fontWeight: FontWeight.bold))),
-                        const SizedBox(height: 6),
-                        Center(child: Text(message,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(color: Colors.white60))),
-                        if (active) Padding(padding: const EdgeInsets.only(top: 8), child: Center(child: Text('⏱ ${_durationLabel()}', style: const TextStyle(color: Color(0xFF79E6B5))))),
-                        const SizedBox(height: 22),
-                        Center(
-                          child: SizedBox(
-                            width: 190, height: 58,
-                            child: FilledButton(
-                              onPressed: busy ? null :
-                                  (active ? disconnect : () => connect()),
-                              style: FilledButton.styleFrom(
-                                backgroundColor: const Color(0xFF8B42E8),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(30)),
+                        const SizedBox(height: 4),
+                        SizedBox(
+                          height: 350,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // The animated world map is a background layer behind the status and connect control.
+                              Positioned.fill(
+                                child: AnimatedGlobe(
+                                  latitude: selected?.latitude,
+                                  longitude: selected?.longitude,
+                                ),
                               ),
-                              child: Text(active
-                                  ? tr('قطع اتصال', 'DISCONNECT')
-                                  : tr('اتصال', 'CONNECT'),
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w900,
-                                      letterSpacing: 1.2, fontSize: 16)),
-                            ),
+                              Positioned.fill(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: RadialGradient(
+                                      colors: [const Color(0x00100A1B), const Color(0xCC09070F)],
+                                      stops: const [0.48, 1],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const SizedBox(height: 18),
+                                  Container(
+                                    width: 82,
+                                    height: 82,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: const Color(0xCC1A1028),
+                                      border: Border.all(color: const Color(0xFF9B5CFF), width: 2),
+                                      boxShadow: const [BoxShadow(color: Color(0x669B5CFF), blurRadius: 30, spreadRadius: 4)],
+                                    ),
+                                    child: const Icon(Icons.shield_rounded, size: 40, color: Color(0xFFC9A7FF)),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(stateText, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                                  const SizedBox(height: 5),
+                                  Text(message, textAlign: TextAlign.center,
+                                      style: const TextStyle(color: Colors.white60)),
+                                  if (active)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 8),
+                                      child: Text('⏱ ${_durationLabel()}',
+                                          style: const TextStyle(color: Color(0xFF79E6B5))),
+                                    ),
+                                  const SizedBox(height: 18),
+                                  SizedBox(
+                                    width: 210,
+                                    height: 58,
+                                    child: FilledButton(
+                                      onPressed: busy ? null : (active ? disconnect : () => connect()),
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: const Color(0xFF8B42E8),
+                                        elevation: 12,
+                                        shadowColor: const Color(0xAA9B5CFF),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                                      ),
+                                      child: Text(active ? tr('قطع اتصال', 'DISCONNECT') : tr('اتصال', 'CONNECT'),
+                                          style: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.1, fontSize: 16)),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: 26),
@@ -517,15 +665,28 @@ class _LevikoAppState extends State<LevikoApp> {
                           color: const Color(0xFF171020),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18),
                             side: const BorderSide(color: Color(0xFF493064))),
-                          child: ListTile(
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(18),
                             onTap: _openLocations,
-                            leading: const CircleAvatar(backgroundColor: Color(0xFF2A1A3C),
-                              child: Icon(Icons.public, color: Color(0xFFC9A7FF))),
-                            title: Text(selected == null ? tr('انتخاب سرور', 'Choose server') : _cityLabel(selected!),
-                              style: const TextStyle(fontWeight: FontWeight.bold)),
-                            subtitle: Text(tr('برای دیدن همه سرورها لمس کنید', 'Tap to view all servers'),
-                              style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                            trailing: const Icon(Icons.keyboard_arrow_down, color: Color(0xFFC9A7FF)),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                              child: Row(children: [
+                                const CircleAvatar(backgroundColor: Color(0xFF2A1A3C),
+                                  child: Icon(Icons.public, color: Color(0xFFC9A7FF))),
+                                const SizedBox(width: 12),
+                                Expanded(child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(selected == null ? tr('انتخاب سرور', 'Choose server') : _cityLabel(selected!),
+                                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                                    Text(tr('برای دیدن و انتخاب سرورها لمس کنید', 'Tap to browse and select servers'),
+                                      style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                                  ],
+                                )),
+                                const Icon(Icons.keyboard_arrow_down, color: Color(0xFFC9A7FF)),
+                              ]),
+                            ),
                           ),
                         ),
                         const SizedBox(height: 14),
