@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:sing_box/sing_box.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const subscriptionUrl =
     'https://raw.githubusercontent.com/danesh1118/SS/refs/heads/main/CC';
@@ -32,6 +34,9 @@ class Node {
   int? pingMs;
   String city = '';
   String countryCode = '';
+  double? latitude;
+  double? longitude;
+  bool favorite = false;
 
   Node({
     required this.link,
@@ -63,12 +68,19 @@ class _LevikoAppState extends State<LevikoApp> {
   double upBps = 0;
   int downTotal = 0;
   int upTotal = 0;
+  final Set<String> favoriteKeys = {};
+  late Future<void> favoritesReady;
+  DateTime? connectedAt;
+  Timer? connectionTimer;
+  int connectionSeconds = 0;
+  String _nodeKey(Node n) => '${n.host}:${n.port}';
 
   String tr(String fa, String en) => english ? en : fa;
 
   @override
   void initState() {
     super.initState();
+    favoritesReady = _loadFavorites();
     statusSub = SingBox.instance.watchConnectionStatus().listen((s) {
       if (!mounted) return;
       setState(() => stateText = s == SingBoxConnectionStatus.connected
@@ -76,6 +88,18 @@ class _LevikoAppState extends State<LevikoApp> {
           : s == SingBoxConnectionStatus.connecting
               ? tr('در حال اتصال', 'Connecting')
               : tr('قطع', 'Disconnected'));
+      if (s == SingBoxConnectionStatus.connected && connectedAt == null) {
+        connectedAt = DateTime.now();
+        connectionSeconds = 0;
+        connectionTimer?.cancel();
+        connectionTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+          if (mounted && connectedAt != null) setState(() => connectionSeconds = DateTime.now().difference(connectedAt!).inSeconds);
+        });
+      } else if (s != SingBoxConnectionStatus.connected) {
+        connectedAt = null;
+        connectionTimer?.cancel();
+        connectionSeconds = 0;
+      }
     });
     statsSub = SingBox.instance.watchConnectionStats().listen((stats) {
       if (!mounted) return;
@@ -93,56 +117,77 @@ class _LevikoAppState extends State<LevikoApp> {
   void dispose() {
     statusSub?.cancel();
     statsSub?.cancel();
+    connectionTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> loadSubscription() async {
+  Future<void> _loadFavorites() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      favoriteKeys.addAll(prefs.getStringList('favorite_nodes') ?? const []);
+      if (mounted) setState(() { for (final n in nodes) { n.favorite = favoriteKeys.contains(_nodeKey(n)); } });
+    } catch (_) {}
+  }
+
+  Future<void> _toggleFavorite(Node n) async {
+    final key = _nodeKey(n);
     setState(() {
-      loading = true;
-      message = tr('در حال دریافت سرورها…', 'Loading servers…');
+      n.favorite = !n.favorite;
+      if (n.favorite) { favoriteKeys.add(key); } else { favoriteKeys.remove(key); }
     });
     try {
-      final response = await http.get(Uri.parse(subscriptionUrl))
-          .timeout(const Duration(seconds: 25));
-      if (response.statusCode != 200) {
-        throw Exception('HTTP ${response.statusCode}');
-      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('favorite_nodes', favoriteKeys.toList());
+    } catch (_) {}
+  }
+
+  String _durationLabel() {
+    final h = connectionSeconds ~/ 3600;
+    final m = (connectionSeconds % 3600) ~/ 60;
+    final sec = connectionSeconds % 60;
+    return '${h.toString().padLeft(2,'0')}:${m.toString().padLeft(2,'0')}:${sec.toString().padLeft(2,'0')}';
+  }
+
+  Future<void> loadSubscription() async {
+    if (mounted) setState(() { loading = nodes.isEmpty; message = tr('در حال دریافت فهرست سرورها…', 'Fetching server list…'); });
+    try {
+      await favoritesReady;
+      final response = await http.get(Uri.parse(subscriptionUrl)).timeout(const Duration(seconds: 18));
+      if (response.statusCode != 200) throw Exception('HTTP ${response.statusCode}');
       final body = _decodeSubscription(response.body);
-      final parsed = body
-          .split(RegExp(r'[\r\n]+'))
+      final parsed = body.split(RegExp(r'[\r\n]+'))
           .map((s) => s.trim())
           .where((s) => s.isNotEmpty && !s.startsWith('#'))
-          .where((s) => RegExp(r'^(vless|vmess|trojan|ss)://',
-                  caseSensitive: false)
-              .hasMatch(s))
-          .map(_parseNode)
-          .whereType<Node>()
-          .toList();
-
-      if (parsed.isEmpty) {
-        throw Exception(tr('کانفیگ پشتیبانی‌شده‌ای پیدا نشد',
-            'No supported server links found'));
-      }
-      for (final node in parsed) {
-        node.pingMs = await _tcpPing(node.host, node.port);
-        await _lookupLocation(node);
-      }
-      parsed.sort((a, b) =>
-          (a.pingMs ?? 999999).compareTo(b.pingMs ?? 999999));
+          .where((s) => RegExp(r'^(vless|vmess|trojan|ss)://', caseSensitive: false).hasMatch(s))
+          .map(_parseNode).whereType<Node>().toList();
+      if (parsed.isEmpty) throw Exception(tr('کانفیگ پشتیبانی‌شده‌ای پیدا نشد', 'No supported server links found'));
+      for (final n in parsed) { n.favorite = favoriteKeys.contains(_nodeKey(n)); }
+      parsed.sort((a,b) => a.name.compareTo(b.name));
       if (!mounted) return;
-      setState(() {
-        nodes = parsed;
-        selected = parsed.first;
-        loading = false;
-        message = tr('${parsed.length} سرور آماده است',
-            '${parsed.length} servers ready');
-      });
+      setState(() { nodes = parsed; selected ??= parsed.first; loading = false; message = tr('${parsed.length} سرور دریافت شد؛ در حال بررسی پینگ و موقعیت…', '${parsed.length} servers loaded; checking ping and location…'); });
+      // Do not block the first screen on slow geolocation services. Enrich in small parallel batches.
+      unawaited(_enrichNodes(parsed));
     } catch (e) {
       if (!mounted) return;
+      setState(() { loading = false; message = tr('خطا در دریافت سرورها: $e', 'Could not load servers: $e'); });
+    }
+  }
+
+  Future<void> _enrichNodes(List<Node> list) async {
+    for (var i = 0; i < list.length; i += 6) {
+      final batch = list.skip(i).take(6);
+      await Future.wait(batch.map((n) async {
+        final pingFuture = _tcpPing(n.host, n.port);
+        final locationFuture = _lookupLocation(n);
+        await locationFuture;
+        n.pingMs = await pingFuture;
+      }));
+      if (!mounted) return;
       setState(() {
-        loading = false;
-        message = tr('خطا در دریافت سرورها: $e',
-            'Could not load servers: $e');
+        final sorted = [...nodes]..sort((a,b) => (a.pingMs ?? 999999).compareTo(b.pingMs ?? 999999));
+        nodes = sorted;
+        if (selected != null) { final match = nodes.where((x) => _nodeKey(x) == _nodeKey(selected!)); if (match.isNotEmpty) selected = match.first; }
+        message = tr('سرورها آماده‌اند • پینگ و موقعیت به‌روزرسانی شد', 'Servers ready • ping and locations updated');
       });
     }
   }
@@ -251,6 +296,8 @@ class _LevikoAppState extends State<LevikoApp> {
       node.location = '${data['country'] ?? ''}'.trim().isEmpty
           ? node.location : '${data['country']}';
       node.countryCode = '${data['country_code'] ?? ''}'.toUpperCase();
+      node.latitude = (data['latitude'] as num?)?.toDouble();
+      node.longitude = (data['longitude'] as num?)?.toDouble();
       node.flag = _flagFromCode(node.countryCode);
     } catch (_) {
       // Keep the location inferred from the subscription remark as fallback.
@@ -282,43 +329,50 @@ class _LevikoAppState extends State<LevikoApp> {
   }
 
   void _openLocations() {
+    final snapshot = List<Node>.from(nodes);
     showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF15111E),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(26))),
-      builder: (context) => SafeArea(
-        child: SizedBox(
-          height: MediaQuery.of(context).size.height * .72,
-          child: Column(children: [
-            const SizedBox(height: 12),
-            Container(width: 42, height: 4, decoration: BoxDecoration(
-              color: Colors.white24, borderRadius: BorderRadius.circular(8))),
-            Padding(padding: const EdgeInsets.all(18), child: Row(children: [
-              const Icon(Icons.public, color: Color(0xFFC9A7FF)),
-              const SizedBox(width: 10),
-              Text(tr('انتخاب سرور', 'Select server'), style: const TextStyle(
-                fontSize: 19, fontWeight: FontWeight.bold)),
-              const Spacer(),
-              Text('${nodes.length}', style: const TextStyle(color: Colors.white54)),
+      context: context, isScrollControlled: true, backgroundColor: const Color(0xFF15111E),
+      useSafeArea: true, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+      builder: (sheetContext) {
+        String query = '';
+        bool onlyFavorites = false;
+        return StatefulBuilder(builder: (context, sheetSetState) {
+          final filtered = snapshot.where((n) {
+            final matches = query.isEmpty || _cityLabel(n).toLowerCase().contains(query.toLowerCase()) || n.location.toLowerCase().contains(query.toLowerCase()) || n.countryCode.toLowerCase().contains(query.toLowerCase());
+            return matches && (!onlyFavorites || n.favorite);
+          }).toList();
+          return SizedBox(height: MediaQuery.of(context).size.height * .82, child: Column(children: [
+            const SizedBox(height: 12), Container(width: 44, height: 4, decoration: BoxDecoration(color: Colors.white30, borderRadius: BorderRadius.circular(8))),
+            Padding(padding: const EdgeInsets.fromLTRB(18,18,18,10), child: Row(children: [
+              const Icon(Icons.public, color: Color(0xFFC9A7FF)), const SizedBox(width: 10),
+              Text(tr('انتخاب موقعیت', 'Choose location'), style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold)), const Spacer(), Text('${snapshot.length} ${tr('سرور','servers')}', style: const TextStyle(color: Colors.white54)),
             ])),
-            Expanded(child: ListView(padding: const EdgeInsets.symmetric(horizontal: 16),
-              children: [
-                _serverTile(flag: '⚡', title: tr('سریع‌ترین سرور', 'Fastest server'),
-                  subtitle: tr('انتخاب بر اساس کمترین پینگ', 'Lowest measured latency'),
-                  ping: nodes.map((e) => e.pingMs).whereType<int>().fold<int?>(null,
-                    (a,b) => a == null || b < a ? b : a), selectedTile: false,
-                  onTap: () { Navigator.pop(context); fastest(); }),
-                const SizedBox(height: 8),
-                ...nodes.map((n) => _serverTile(flag: n.flag,
-                  title: _cityLabel(n), subtitle: n.location,
-                  ping: n.pingMs, selectedTile: selected == n,
-                  onTap: () { setState(() => selected = n); Navigator.pop(context); })),
-              ])),
-          ]),
-        ),
-      ),
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: TextField(
+              onChanged: (v) => sheetSetState(() => query = v),
+              decoration: InputDecoration(prefixIcon: const Icon(Icons.search), hintText: tr('جستجوی کشور یا شهر…','Search country or city…'), filled: true, fillColor: const Color(0xFF211A2B), border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none)),
+            )),
+            Padding(padding: const EdgeInsets.fromLTRB(16,10,16,8), child: Row(children: [
+              FilterChip(label: Text(tr('همه سرورها','All servers')), selected: !onlyFavorites, onSelected: (_) => sheetSetState(() => onlyFavorites = false)),
+              const SizedBox(width: 8), FilterChip(avatar: const Icon(Icons.star, size: 16), label: Text(tr('علاقه‌مندی‌ها','Favorites')), selected: onlyFavorites, onSelected: (_) => sheetSetState(() => onlyFavorites = true)),
+              const Spacer(), TextButton.icon(onPressed: () { Navigator.pop(context); loadSubscription(); }, icon: const Icon(Icons.refresh, size: 17), label: Text(tr('تازه‌سازی','Refresh'))),
+            ])),
+            Expanded(child: filtered.isEmpty ? Center(child: Text(snapshot.isEmpty ? tr('هنوز سروری دریافت نشده؛ اتصال اینترنت و سابسکریپشن را بررسی کن.','No servers loaded yet. Check your connection and subscription.') : tr('موردی پیدا نشد','No matches found'), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white60))) : ListView.builder(
+              padding: const EdgeInsets.fromLTRB(14,0,14,20), itemCount: filtered.length + 1,
+              itemBuilder: (context, index) {
+                if (index == 0) return Padding(padding: const EdgeInsets.only(bottom: 8), child: _serverTile(flag: '⚡', title: tr('سریع‌ترین سرور','Fastest server'), subtitle: tr('اتصال به کمترین پینگ','Connect to lowest latency'), ping: nodes.map((e) => e.pingMs).whereType<int>().fold<int?>(null,(a,b) => a == null || b < a ? b : a), selectedTile: false, onTap: () { Navigator.pop(context); fastest(); }));
+                final n = filtered[index - 1];
+                return Card(color: selected != null && _nodeKey(selected!) == _nodeKey(n) ? const Color(0xFF28163D) : const Color(0xFF15121B), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15), side: BorderSide(color: selected != null && _nodeKey(selected!) == _nodeKey(n) ? const Color(0xFF9B5CFF) : const Color(0xFF292331))), child: ListTile(
+                  onTap: () { setState(() => selected = n); Navigator.pop(context); },
+                  leading: Text(n.flag, style: const TextStyle(fontSize: 25)),
+                  title: Text(_cityLabel(n), style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text(n.location.isEmpty ? tr('در حال تشخیص موقعیت…','Detecting location…') : n.location, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(n.pingMs == null ? '—' : '${n.pingMs} ms', style: const TextStyle(color: Color(0xFF79E6B5), fontWeight: FontWeight.bold)), IconButton(onPressed: () { _toggleFavorite(n); sheetSetState(() {}); }, icon: Icon(n.favorite ? Icons.star : Icons.star_border, color: n.favorite ? Colors.amber : Colors.white54))]),
+                ));
+              },
+            )),
+          ]));
+        });
+      },
     );
   }
 
@@ -399,6 +453,7 @@ class _LevikoAppState extends State<LevikoApp> {
                 style: TextStyle(fontWeight: FontWeight.w900,
                     letterSpacing: 2, color: Color(0xFFC9A7FF))),
             actions: [
+              IconButton(tooltip: tr('تازه‌سازی سرورها','Refresh servers'), onPressed: loading ? null : loadSubscription, icon: const Icon(Icons.refresh, color: Color(0xFFC9A7FF))),
               TextButton(
                 onPressed: () => setState(() => english = !english),
                 child: Text(english ? 'فارسی' : 'English'),
@@ -421,21 +476,10 @@ class _LevikoAppState extends State<LevikoApp> {
                       padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
                       children: [
                         const SizedBox(height: 12),
-                        Center(child: Container(
-                          width: 116, height: 116,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: const Color(0xFF1A1028),
-                            border: Border.all(
-                                color: const Color(0xFF9B5CFF), width: 2),
-                            boxShadow: const [
-                              BoxShadow(color: Color(0x669B5CFF),
-                                  blurRadius: 35, spreadRadius: 5),
-                            ],
-                          ),
-                          child: const Icon(Icons.shield_rounded,
-                              size: 58, color: Color(0xFFC9A7FF)),
-                        )),
+                        SizedBox(height: 190, child: Stack(alignment: Alignment.center, children: [
+                          Positioned.fill(child: AnimatedGlobe(latitude: selected?.latitude, longitude: selected?.longitude)),
+                          Container(width: 86, height: 86, decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xAA1A1028), border: Border.all(color: const Color(0xFF9B5CFF), width: 2), boxShadow: const [BoxShadow(color: Color(0x669B5CFF), blurRadius: 32, spreadRadius: 5)]), child: const Icon(Icons.shield_rounded, size: 42, color: Color(0xFFC9A7FF))),
+                        ])),
                         const SizedBox(height: 18),
                         Center(child: Text(stateText,
                             style: const TextStyle(fontSize: 20,
@@ -444,6 +488,7 @@ class _LevikoAppState extends State<LevikoApp> {
                         Center(child: Text(message,
                             textAlign: TextAlign.center,
                             style: const TextStyle(color: Colors.white60))),
+                        if (active) Padding(padding: const EdgeInsets.only(top: 8), child: Center(child: Text('⏱ ${_durationLabel()}', style: const TextStyle(color: Color(0xFF79E6B5))))),
                         const SizedBox(height: 22),
                         Center(
                           child: SizedBox(
@@ -593,4 +638,82 @@ class _LevikoAppState extends State<LevikoApp> {
       ),
     );
   }
+}
+
+
+class GlobePainter extends CustomPainter {
+  final double? latitude;
+  final double? longitude;
+  final double phase;
+  GlobePainter({this.latitude, this.longitude, required this.phase});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = math.min(size.width * .39, size.height * .47);
+    final globe = Paint()..shader = const RadialGradient(colors: [Color(0xFF30204B), Color(0xFF100D1A), Color(0xFF080710)], stops: [0, .72, 1]).createShader(Rect.fromCircle(center: center, radius: radius));
+    canvas.drawCircle(center, radius, globe);
+    final outline = Paint()..color = const Color(0xFF9B5CFF)..style = PaintingStyle.stroke..strokeWidth = 1.3;
+    canvas.drawCircle(center, radius, outline);
+    final grid = Paint()..color = const Color(0x557E56B5)..style = PaintingStyle.stroke..strokeWidth = .7;
+    for (int i = -2; i <= 2; i++) {
+      final rect = Rect.fromCenter(center: center, width: radius * 2 * (1 - i.abs() * .13), height: radius * 2);
+      canvas.drawOval(rect, grid);
+      final y = center.dy + i * radius * .32;
+      final half = radius * math.sqrt(math.max(0, 1 - math.pow((y-center.dy)/radius, 2)));
+      canvas.drawLine(Offset(center.dx-half,y), Offset(center.dx+half,y), grid);
+    }
+    // Low-detail continent silhouettes provide an offline, lightweight globe backdrop.
+    final land = Paint()..color = const Color(0xFF7652A5).withOpacity(.58)..style = PaintingStyle.fill;
+    final drift = math.sin(phase * 2 * math.pi) * radius * .035;
+    final shapes = <List<Offset>>[
+      [Offset(-.78,-.42),Offset(-.55,-.62),Offset(-.30,-.52),Offset(-.23,-.25),Offset(-.42,-.04),Offset(-.50,.28),Offset(-.68,.18),Offset(-.82,-.08)],
+      [Offset(-.18,-.62),Offset(.08,-.70),Offset(.34,-.56),Offset(.30,-.30),Offset(.12,-.20),Offset(.04,.12),Offset(-.12,.02),Offset(-.28,-.28)],
+      [Offset(.34,-.56),Offset(.70,-.50),Offset(.82,-.22),Offset(.66,-.02),Offset(.44,-.10),Offset(.32,-.32)],
+      [Offset(.16,.12),Offset(.42,.04),Offset(.60,.24),Offset(.48,.56),Offset(.26,.66),Offset(.12,.38)],
+    ];
+    for (final poly in shapes) {
+      final path = Path();
+      for (int i=0;i<poly.length;i++) { final pt = Offset(center.dx + poly[i].dx*radius + drift, center.dy + poly[i].dy*radius); if(i==0) path.moveTo(pt.dx,pt.dy); else path.lineTo(pt.dx,pt.dy); }
+      path.close();
+      canvas.save(); canvas.clipPath(Path()..addOval(Rect.fromCircle(center:center,radius:radius))); canvas.drawPath(path,land); canvas.restore();
+    }
+    if (latitude != null && longitude != null) {
+      final lat = latitude!.clamp(-85,85).toDouble() * math.pi / 180;
+      final lon = longitude!.clamp(-180,180).toDouble() * math.pi / 180;
+      final x = center.dx + radius * .88 * (lon / math.pi) + drift;
+      final y = center.dy - radius * .78 * (lat / (math.pi/2));
+      if ((Offset(x,y)-center).distance < radius) {
+        final pulse = .5 + .5 * math.sin(phase * 2 * math.pi);
+        canvas.drawOval(Rect.fromCenter(center: Offset(x,y), width: 24 + pulse*4, height: 16 + pulse*3), Paint()..color = const Color(0x667E4BD2)..style=PaintingStyle.stroke..strokeWidth=1.4);
+        canvas.drawCircle(Offset(x,y), 8 + pulse*6, Paint()..color = const Color(0x559D5CFF)..style=PaintingStyle.stroke..strokeWidth=2);
+        canvas.drawCircle(Offset(x,y), 4, Paint()..color = const Color(0xFFFFD76A));
+        canvas.drawCircle(Offset(x,y), 2, Paint()..color = Colors.white);
+      }
+    }
+    final glow = Paint()..shader = RadialGradient(colors:[const Color(0x009B5CFF),const Color(0x229B5CFF)]).createShader(Rect.fromCircle(center:center,radius:radius*1.25));
+    canvas.drawCircle(center,radius*1.22,glow);
+  }
+
+  @override
+  bool shouldRepaint(covariant GlobePainter oldDelegate) => oldDelegate.latitude != latitude || oldDelegate.longitude != longitude || oldDelegate.phase != phase;
+}
+
+
+class AnimatedGlobe extends StatefulWidget {
+  final double? latitude;
+  final double? longitude;
+  const AnimatedGlobe({super.key, this.latitude, this.longitude});
+  @override
+  State<AnimatedGlobe> createState() => _AnimatedGlobeState();
+}
+
+class _AnimatedGlobeState extends State<AnimatedGlobe> with SingleTickerProviderStateMixin {
+  late final AnimationController controller;
+  @override
+  void initState() { super.initState(); controller = AnimationController(vsync: this, duration: const Duration(seconds: 5))..repeat(); }
+  @override
+  void dispose() { controller.dispose(); super.dispose(); }
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(animation: controller, builder: (_, __) => CustomPaint(painter: GlobePainter(latitude: widget.latitude, longitude: widget.longitude, phase: controller.value)));
 }
