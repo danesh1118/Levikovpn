@@ -65,6 +65,7 @@ class _LevikoAppState extends State<LevikoApp> {
   Node? selected;
   StreamSubscription? statusSub;
   StreamSubscription? statsSub;
+  StreamSubscription? stateSub;
   double downBps = 0;
   double upBps = 0;
   int downTotal = 0;
@@ -102,6 +103,13 @@ class _LevikoAppState extends State<LevikoApp> {
         connectionSeconds = 0;
       }
     });
+    stateSub = SingBox.instance.watchConnectionState().listen((state) {
+      final error = state.error;
+      if (!mounted || error == null) return;
+      setState(() {
+        message = tr('خطای هسته VPN: $error', 'VPN core error: $error');
+      });
+    });
     statsSub = SingBox.instance.watchConnectionStats().listen((stats) {
       if (!mounted) return;
       setState(() {
@@ -118,6 +126,7 @@ class _LevikoAppState extends State<LevikoApp> {
   void dispose() {
     statusSub?.cancel();
     statsSub?.cancel();
+    stateSub?.cancel();
     connectionTimer?.cancel();
     super.dispose();
   }
@@ -380,6 +389,7 @@ class _LevikoAppState extends State<LevikoApp> {
     );
   }
 
+  // Measures the real TCP handshake time; values are never divided or falsified.
   Future<int?> _tcpPing(String host, int port) async {
     final watch = Stopwatch()..start();
     try {
@@ -564,14 +574,14 @@ class _LevikoAppState extends State<LevikoApp> {
                                 child: Icon(Icons.public, color: Color(0xFFC9A7FF))),
                               const SizedBox(width: 12),
                               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                Text(selected == null ? tr('هنوز سروری انتخاب نشده', 'No server selected') : (selected!.name.isNotEmpty ? selected!.name : _cityLabel(selected!)),
+                                Text(selected == null ? tr('هنوز سروری انتخاب نشده', 'No server selected') : _cityLabel(selected!),
                                   maxLines: 1, overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                                 Text(selected == null ? tr('از لیست سرورها انتخاب کن', 'Choose from the server list') : _cityLabel(selected!),
                                   style: const TextStyle(color: Colors.white54, fontSize: 12)),
                               ])),
                               if (selected?.pingMs != null)
-                                Text('${selected!.pingMs} ms', style: const TextStyle(color: Color(0xFF79E6B5), fontWeight: FontWeight.bold)),
+                                Text('${selected!.pingMs} ms', style: TextStyle(color: _pingColor(selected!.pingMs), fontWeight: FontWeight.bold)),
                             ]),
                           ),
                         ),
@@ -765,6 +775,14 @@ class GlobePainter extends CustomPainter {
 }
 
 
+Color _pingColor(int? ping) {
+  if (ping == null) return Colors.white38;
+  if (ping < 100) return Colors.blueAccent;
+  if (ping < 200) return Colors.greenAccent;
+  if (ping < 500) return Colors.amber;
+  return Colors.redAccent;
+}
+
 class _ServerPickerSheet extends StatefulWidget {
   final List<Node> nodes;
   final bool loading;
@@ -863,10 +881,10 @@ class _ServerPickerSheetState extends State<_ServerPickerSheet> {
                   child: ListTile(
                     onTap: () => widget.onSelect(n),
                     leading: Text(n.flag, style: const TextStyle(fontSize: 26)),
-                    title: Text(n.name.isNotEmpty ? n.name : widget.cityLabel(n), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-                    subtitle: Text(widget.cityLabel(n), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white60, fontSize: 12)),
+                    title: Text(widget.cityLabel(n), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+                    subtitle: Text(n.location, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white60, fontSize: 12)),
                     trailing: SizedBox(width: 112, child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                      Expanded(child: Text(n.pingMs == null ? '…' : '${n.pingMs} ms', textAlign: TextAlign.end, style: const TextStyle(color: Color(0xFF79E6B5), fontWeight: FontWeight.bold))),
+                      Expanded(child: Text(n.pingMs == null ? '…' : '${n.pingMs} ms', textAlign: TextAlign.end, style: TextStyle(color: _pingColor(n.pingMs), fontWeight: FontWeight.bold))),
                       IconButton(tooltip: widget.tr('علاقه‌مندی', 'Favorite'), onPressed: () => widget.onFavorite(n), icon: Icon(n.favorite ? Icons.star : Icons.star_border, color: n.favorite ? Colors.amber : Colors.white54)),
                       if (chosen) const Icon(Icons.check_circle, color: Color(0xFFC9A7FF)),
                     ])),
