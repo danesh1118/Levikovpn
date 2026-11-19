@@ -1,0 +1,4 @@
+This project depends on sing_box / sing-box, distributed under GPL-3.0-or-later.
+Review the upstream license and comply with source-code, attribution and notice
+requirements before distributing binaries. This starter project is not an
+official SagerNet product and is not affiliated with the sing-box maintainers.
