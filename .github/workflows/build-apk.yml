@@ -9,7 +9,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,36 +28,50 @@ jobs:
       - name: Create Android Project
         run: flutter create . --platforms=android --org com.leviko.vpn
 
-      - name: Set Android App Display Name
+      - name: Set App Display Name
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
-
           manifest = Path("android/app/src/main/AndroidManifest.xml")
           if not manifest.exists():
-              raise SystemExit(f"Manifest not found: {manifest}")
-
+              raise SystemExit("AndroidManifest.xml was not generated")
           text = manifest.read_text(encoding="utf-8")
-          app_tag = re.search(r"<application\b[^>]*>", text, flags=re.DOTALL)
-          if not app_tag:
-              raise SystemExit("Could not find <application> tag in AndroidManifest.xml")
-
-          tag = app_tag.group(0)
-          if re.search(r'\bandroid:label\s*=', tag):
-              new_tag = re.sub(
-                  r'android:label\s*=\s*"[^"]*"',
-                  'android:label="Leviko VPN"',
-                  tag,
-                  count=1
-              )
+          match = re.search(r"<application\\b[^>]*>", text, flags=re.DOTALL)
+          if not match:
+              raise SystemExit("Could not find the application tag")
+          tag = match.group(0)
+          if re.search(r'android:label\\s*=', tag):
+              tag = re.sub(r'android:label\\s*=\\s*"[^"]*"', 'android:label="Leviko VPN"', tag, count=1)
           else:
-              new_tag = tag[:-1] + ' android:label="Leviko VPN">'
-          text = text[:app_tag.start()] + new_tag + text[app_tag.end():]
+              tag = tag[:-1] + ' android:label="Leviko VPN">'
+          text = text[:match.start()] + tag + text[match.end():]
           manifest.write_text(text, encoding="utf-8")
-          print("Android app display name set to Leviko VPN")
           PY
+
+      - name: Check App Icon File
+        run: |
+          test -f assets/icon/app_icon.png || {
+            echo "ERROR: Upload your logo to assets/icon/app_icon.png in the repository."
+            exit 1
+          }
+
+      - name: Install Icon Generator
+        run: flutter pub add --dev flutter_launcher_icons
+
+      - name: Configure Launcher Icon
+        run: |
+          cat > flutter_launcher_icons.yaml <<'YAML'
+          flutter_launcher_icons:
+            android: true
+            ios: false
+            image_path: "assets/icon/app_icon.png"
+            min_sdk_android: 21
+          YAML
+
+      - name: Generate Android Launcher Icons
+        run: dart run flutter_launcher_icons -f flutter_launcher_icons.yaml
 
       - name: Install Dependencies
         run: flutter pub get
