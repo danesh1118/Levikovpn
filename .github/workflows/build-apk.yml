@@ -39,11 +39,11 @@ jobs:
           import re
           manifest = Path("android/app/src/main/AndroidManifest.xml")
           text = manifest.read_text(encoding="utf-8")
-          match = re.search(r"<application\\b[^>]*>", text, flags=re.I | re.S)
+          match = re.search(r"<application\b[^>]*>", text, flags=re.I | re.S)
           if not match:
               raise SystemExit("Could not find <application> in AndroidManifest.xml")
           tag = match.group(0)
-          label = r'\\bandroid:label\\s*=\\s*"[^"]*"'
+          label = r'\bandroid:label\s*=\s*"[^"]*"'
           if re.search(label, tag):
               tag = re.sub(label, 'android:label="Leviko VPN"', tag, count=1)
           else:
@@ -87,7 +87,7 @@ jobs:
         id: app_version
         shell: bash
         run: |
-          VERSION=$(sed -n 's/^version: *\\([^+ ]*\\).*/\\1/p' pubspec.yaml)
+          VERSION=$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' pubspec.yaml)
           if [ -z "$VERSION" ]; then echo "Could not read version from pubspec.yaml"; exit 1; fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
