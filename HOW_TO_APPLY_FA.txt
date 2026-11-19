@@ -1,0 +1,19 @@
+راهنمای اعمال تغییرات در GitHub
+
+این بسته سه مورد دارد:
+1) pubspec.yaml
+2) .github/workflows/build-apk.yml
+3) assets/icon/app_icon.png
+
+در مخزن GitHub خودت:
+- فایل pubspec.yaml ریشه پروژه را با فایل همین بسته جایگزین کن.
+- فایل .github/workflows/build-apk.yml را با فایل همین بسته جایگزین کن.
+- پوشه assets/icon را در ریشه پروژه آپلود کن تا مسیر نهایی assets/icon/app_icon.png باشد.
+- هر سه تغییر را روی شاخه main ذخیره (Commit) کن.
+- به تب Actions برو، گردش کار Build LEVIKO VPN APK را انتخاب کن و Run workflow را بزن.
+- پس از پایان موفق، وارد اجرای workflow شو، بخش Artifacts را باز کن و LEVIKO-VPN-APK را دانلود کن.
+
+نام نمایشی برنامه: Leviko VPN
+آیکون: نشان سپر/صاعقه/قفل بنفش Leviko
+
+نکته: این بسته فقط تنظیمات نام و آیکون و ساخت APK را آماده می‌کند؛ ساخت موفق و عملکرد VPN باید در GitHub Actions و روی گوشی آزمایش شود.
