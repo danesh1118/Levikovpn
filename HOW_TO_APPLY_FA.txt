@@ -1,19 +1,11 @@
-راهنمای اعمال تغییرات در GitHub
+راهنمای نسخه Xray برای LEVIKO VPN
 
-این بسته سه مورد دارد:
-1) pubspec.yaml
-2) .github/workflows/build-apk.yml
-3) assets/icon/app_icon.png
+این ZIP نسخه کامل سورس پروژه است. آن را به‌صورت کامل در مخزن GitHub جایگزین کنید (به‌خصوص فایل‌های تکی را جداگانه کپی نکنید).
 
-در مخزن GitHub خودت:
-- فایل pubspec.yaml ریشه پروژه را با فایل همین بسته جایگزین کن.
-- فایل .github/workflows/build-apk.yml را با فایل همین بسته جایگزین کن.
-- پوشه assets/icon را در ریشه پروژه آپلود کن تا مسیر نهایی assets/icon/app_icon.png باشد.
-- هر سه تغییر را روی شاخه main ذخیره (Commit) کن.
-- به تب Actions برو، گردش کار Build LEVIKO VPN APK را انتخاب کن و Run workflow را بزن.
-- پس از پایان موفق، وارد اجرای workflow شو، بخش Artifacts را باز کن و LEVIKO-VPN-APK را دانلود کن.
+پس از Commit روی شاخه main، وارد Actions شوید و workflow با نام Build LEVIKO VPN APK را اجرا کنید.
 
-نام نمایشی برنامه: Leviko VPN
-آیکون: نشان سپر/صاعقه/قفل بنفش Leviko
+در این نسخه، GitHub Actions ابتدا کتابخانه بومی Xray یعنی libxray.aar را از سورس رسمی XTLS/libXray می‌سازد، سپس APK را کامپایل می‌کند. نیازی به آپلود دستی AAR نیست.
 
-نکته: این بسته فقط تنظیمات نام و آیکون و ساخت APK را آماده می‌کند؛ ساخت موفق و عملکرد VPN باید در GitHub Actions و روی گوشی آزمایش شود.
+فایل libxray.aar عمداً داخل ZIP نیست و در هر بار Build در محیط GitHub ساخته می‌شود.
+
+توجه: ساخت موفق در GitHub Actions و آزمایش اتصال واقعی روی گوشی دو مرحله جدا هستند. تا قبل از سبز شدن Build و آزمایش کانفیگ‌های واقعی، نسخه را کاملاً تأییدشده تلقی نکنید.

@@ -1,0 +1,170 @@
+name: Build LEVIKO VPN APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Go for libXray
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: false
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create Android Project
+        run: flutter create . --platforms=android --org com.leviko.vpn
+
+      - name: Configure Android for V2Ray Box
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text(encoding="utf-8")
+          if 'xmlns:tools=' not in text:
+              text = text.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ', 1)
+          permissions = [
+              'android.permission.INTERNET',
+              'android.permission.FOREGROUND_SERVICE',
+              'android.permission.FOREGROUND_SERVICE_SPECIAL_USE',
+              'android.permission.POST_NOTIFICATIONS',
+              'android.permission.RECEIVE_BOOT_COMPLETED',
+              'android.permission.CHANGE_NETWORK_STATE',
+              'android.permission.ACCESS_NETWORK_STATE',
+          ]
+          for permission in permissions:
+              if f'android:name="{permission}"' not in text:
+                  text = text.replace('<application', f'<uses-permission android:name="{permission}" />\n    <application', 1)
+          if 'android:name="com.example.v2ray_box.bg.VPNService"' not in text:
+              service = """
+                  <service
+                      android:name="com.example.v2ray_box.bg.VPNService"
+                      android:exported="false"
+                      android:foregroundServiceType="specialUse"
+                      android:permission="android.permission.BIND_VPN_SERVICE">
+                      <intent-filter>
+                          <action android:name="android.net.VpnService" />
+                      </intent-filter>
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="vpn" />
+                  </service>
+                  <service
+                      android:name="com.example.v2ray_box.bg.ProxyService"
+                      android:exported="false"
+                      android:foregroundServiceType="specialUse">
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="proxy" />
+                  </service>"""
+              text = text.replace('</application>', service + '\n    </application>')
+          text = re.sub(r'<application\b', '<application android:usesCleartextTraffic="true"', text, count=1)
+          text = re.sub(r'android:label="[^"]*"', 'android:label="Leviko VPN"', text, count=1)
+          manifest.write_text(text, encoding="utf-8")
+
+          # Flutter stable currently generates Kotlin DSL; support both DSL variants.
+          candidates = [Path('android/app/build.gradle.kts'), Path('android/app/build.gradle')]
+          gradle = next((p for p in candidates if p.exists()), None)
+          if gradle is None:
+              raise SystemExit('Could not find app Gradle build file')
+          g = gradle.read_text(encoding='utf-8')
+          if gradle.suffix == '.kts':
+              if 'multiDexEnabled' not in g:
+                  g = re.sub(r'defaultConfig\s*\{', 'defaultConfig {\n        multiDexEnabled = true', g, count=1)
+              if 'useLegacyPackaging' not in g:
+                  g = re.sub(r'android\s*\{', 'android {\n    packaging {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }', g, count=1)
+              if 'fileTree(mapOf("dir" to "libs"' not in g:
+                  g += '\ndependencies {\n    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))\n}\n'
+          else:
+              if 'multiDexEnabled' not in g:
+                  g = re.sub(r'defaultConfig\s*\{', 'defaultConfig {\n        multiDexEnabled true', g, count=1)
+              if 'useLegacyPackaging' not in g:
+                  g = re.sub(r'android\s*\{', 'android {\n    packaging {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }', g, count=1)
+              if "fileTree(dir: 'libs'" not in g:
+                  g += "\ndependencies {\n    implementation fileTree(dir: 'libs', include: ['*.aar'])\n}\n"
+          gradle.write_text(g, encoding='utf-8')
+          PY
+
+      - name: Verify App Icon
+        run: test -s assets/icon/app_icon.png
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build Xray native Android library
+        shell: bash
+        run: |
+          mkdir -p scripts
+          curl -fsSL https://raw.githubusercontent.com/pesaregorg/v2ray_box/main/example/scripts/build_android_libxray.sh -o scripts/build_android_libxray.sh
+          chmod +x scripts/build_android_libxray.sh
+          bash scripts/build_android_libxray.sh --android-abis arm64-v8a,x86_64
+          test -s android/app/libs/libxray.aar
+
+      - name: Generate Launcher Icons
+        run: |
+          dart pub global activate flutter_launcher_icons
+          cat > flutter_launcher_icons.yaml <<'YAML'
+          flutter_launcher_icons:
+            android: true
+            ios: false
+            image_path: "assets/icon/app_icon.png"
+            min_sdk_android: 21
+          YAML
+          dart pub global run flutter_launcher_icons -f flutter_launcher_icons.yaml
+
+      - name: Build Release APK
+        run: flutter build apk --release
+
+      - name: Prepare APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk leviko-vpn.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LEVIKO-VPN-APK
+          path: leviko-vpn.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Read App Version
+        id: app_version
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' pubspec.yaml)
+          if [ -z "$VERSION" ]; then echo "Could not read app version"; exit 1; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.app_version.outputs.tag }}
+          name: Leviko VPN ${{ steps.app_version.outputs.version }}
+          body: "نسخه انتشار‌یافته Leviko VPN با هسته Xray-core"
+          files: leviko-vpn.apk
+          overwrite_files: true
+          make_latest: true
