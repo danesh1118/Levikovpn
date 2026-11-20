@@ -23,8 +23,12 @@ const updateConfigUrl =
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await vpnCore.initialize(notificationStopButtonText: 'قطع اتصال');
-  // Use Xray-core only. The Android build must bundle libxray.aar.
-  await vpnCore.setCoreEngine('xray');
+  // LEVIKO runs Xray-core only; sing-box is not selected or bundled.
+  final selected = await vpnCore.setCoreEngine('xray');
+  await vpnCore.setServiceMode(VpnMode.vpn);
+  if (!selected) {
+    throw StateError('Could not select Xray-core');
+  }
   runApp(const LevikoApp());
 }
 
@@ -116,7 +120,8 @@ class _LevikoAppState extends State<LevikoApp> {
     });
     stateSub = vpnCore.watchAlerts().listen((alert) {
       if (!mounted) return;
-      final error = alert['error'] ?? alert['message'] ?? alert.toString();
+      final error = alert['error'] ?? alert['message'];
+      if (error == null) return;
       setState(() {
         message = tr('خطای هسته VPN: $error', 'VPN core error: $error');
       });
@@ -222,9 +227,8 @@ class _LevikoAppState extends State<LevikoApp> {
       final response = await http.get(Uri.parse(subscriptionUrl)).timeout(const Duration(seconds: 18));
       if (response.statusCode != 200) throw Exception('HTTP ${response.statusCode}');
       final body = _decodeSubscription(response.body);
-      // Keep this allow-list aligned with sing_box 1.0.0 / sing-box 1.14.4.
-      // XHTTP and ShadowsocksR are intentionally not listed: this core does
-      // not implement those transports/protocols.
+      // Keep this scheme allow-list aligned with the V2Ray Box Xray-core parser.
+      // Transport compatibility (including XHTTP) is handled by Xray-core.
       const supportedSchemes = <String>{
         'vless', 'vmess', 'trojan', 'ss',
         'hysteria', 'hysteria2', 'hy2', 'tuic', 'anytls',
@@ -239,7 +243,7 @@ class _LevikoAppState extends State<LevikoApp> {
             return scheme != null && supportedSchemes.contains(scheme);
           })
           .map(_parseNode).whereType<Node>().toList();
-      if (parsed.isEmpty) throw Exception(tr('کانفیگ قابل‌خواندنی پیدا نشد. این هسته XHTTP و ShadowsocksR را پشتیبانی نمی‌کند.', 'No readable supported links found. This core does not support XHTTP or ShadowsocksR.'));
+      if (parsed.isEmpty) throw Exception(tr('کانفیگ قابل‌خواندنی پیدا نشد. لینک‌های سابسکریپشن را بررسی کنید.', 'No readable supported links found. Check that the subscription contains supported Xray share links.'));
       for (final n in parsed) { n.favorite = favoriteKeys.contains(_nodeKey(n)); }
       parsed.sort((a,b) => a.name.compareTo(b.name));
       if (!mounted) return;
@@ -286,11 +290,7 @@ class _LevikoAppState extends State<LevikoApp> {
   Node? _parseNode(String link) {
     try {
       final uri = Uri.parse(link);
-      // XHTTP is a VLESS transport, not a separate URI scheme. The bundled
-      // sing-box core currently rejects type=xhttp, so do not list it as usable.
-      if ((uri.queryParameters['type'] ?? '').toLowerCase() == 'xhttp') {
-        return null;
-      }
+      // Xray-core supports XHTTP as a VLESS transport.
       String remark = Uri.decodeComponent(uri.fragment).trim();
       if (uri.scheme.toLowerCase() == 'vmess') {
         final encoded = uri.path.isNotEmpty ? uri.path : uri.host;
