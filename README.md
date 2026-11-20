@@ -1,32 +1,23 @@
-# Leviko VPN – server list display and diagnostics update
+# LEVIKO VPN
 
-## Changes
-- Server cards now show the detected city as the main title (for example, Frankfurt), with the flag kept at the left. The subscription remark/config name is no longer rendered.
-- The selected-server label on the home screen also shows the city/location instead of the config remark.
-- Ping colors are: 1–99 ms blue, 100–199 ms green, 200–499 ms yellow, 500+ ms red.
-- Added a listener for sing-box runtime connection errors so a tunnel that starts and then fails can show the core error in the app instead of only showing a generic connected state.
-- The app continues to pass the original share link to sing-box, preserving protocol-specific parameters such as TLS, Reality, Vision, transport, SNI and fingerprint options when present in the link.
+Flutter Android VPN client using `v2ray_box` with the Xray engine selected at startup.
 
-## Protocol support and limits
-The configured `sing_box` dependency documents support for VLESS, VMess, Trojan and Shadowsocks links, including common TLS/Reality/Vision and transport settings supported by the bundled sing-box core. Not every possible third-party config format or extension is supported (for example XHTTP, mKCP and ShadowsocksR are listed as unsupported by that core). A server can also fail because its endpoint, credentials, DNS, network, or server-side configuration is invalid.
+## Build with GitHub Actions
 
-## Important about the no-traffic issue
-This source-only archive adds runtime error reporting, but it cannot prove that traffic works without the full Android project and a real-device test using a valid server profile. If the tunnel says Connected but traffic remains at zero, the sing-box core logs and the exact profile are needed to identify whether the cause is routing, DNS, server reachability, or invalid credentials. Do not treat the connected label alone as proof that the proxy is carrying traffic.
+The repository contains `.github/workflows/build-apk.yml`. Push the complete repository to the `main` branch or run **Build LEVIKO VPN APK** manually from GitHub Actions.
 
-## Ping accuracy
-The displayed pre-connection value is a TCP handshake-time estimate. It is not ICMP ping or end-to-end proxy latency. Values are kept real; dividing 200 ms to display 100 ms would be misleading and would not make the connection faster.
+The workflow:
+1. Creates the Android platform project.
+2. Installs Java, Flutter, Go, Android SDK and NDK.
+3. Downloads the `v2ray_box` 1.0.6 Android Xray build script.
+4. Patches the generated compatibility wrapper to remove its obsolete `nodep.CallResponse` reference, which is no longer present in the current XTLS/libXray API.
+5. Builds and verifies `android/app/libs/libxray.aar`.
+6. Builds the release APK, uploads it as an Actions artifact, and publishes a GitHub release.
 
-## Apply
-1. Extract this ZIP.
-2. Replace `lib/main.dart` in the existing Flutter repository with `Leviko_VPN_Updated/lib/main.dart`.
-3. Keep the existing Android project files.
-4. Build and test on an Android device.
+`libxray.aar` is generated during CI and is intentionally not committed to the repository.
 
-This archive has not been built or tested on a physical Android device in this environment.
+## Important testing note
 
+A green GitHub Actions build confirms that the APK compiled and the native library was packaged. It does not prove that every subscription format or server works. After installing the APK, test it with known-good VLESS, VMess, Trojan or Shadowsocks profiles and check actual data transfer.
 
-## Xray-core Android build
-
-This project uses `v2ray_box` with the Xray engine selected at startup. The GitHub Actions workflow builds the native `libxray.aar` from the official `XTLS/libXray` source before compiling the APK. The AAR is generated in CI and is not committed to this repository.
-
-The Android manifest and Gradle settings required by `v2ray_box` are injected by the workflow after `flutter create`.
+The project source archive does not include a prebuilt APK. The APK is produced by GitHub Actions.
