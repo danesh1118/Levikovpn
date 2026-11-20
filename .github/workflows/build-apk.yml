@@ -32,6 +32,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # Cache Gradle distributions and downloaded dependencies between runs.
+      # This reduces repeated requests to Maven Central, which can return HTTP 429.
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -223,8 +228,23 @@ jobs:
           ICON_CONFIG
           dart pub global run flutter_launcher_icons -f flutter_launcher_icons.yaml
 
-      - name: Build release APK
-        run: flutter build apk --release
+      - name: Build release APK (retry transient Maven/Gradle network errors)
+        shell: bash
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3 4 5; do
+            echo "Flutter release build attempt ${attempt}/5"
+            if flutter build apk --release --no-pub; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "Release build failed after 5 attempts. Check whether Maven Central is still rate-limiting requests (HTTP 429)."
+              exit 1
+            fi
+            delay=$((attempt * 30))
+            echo "Build failed; waiting ${delay}s before retry. Gradle cache will be reused."
+            sleep "$delay"
+          done
 
       - name: Prepare APK
         run: cp build/app/outputs/flutter-apk/app-release.apk leviko-vpn.apk
