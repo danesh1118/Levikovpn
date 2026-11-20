@@ -1,25 +1,19 @@
-# Leviko VPN – server list display and diagnostics update
+# LEVIKO VPN — Xray-core migration
 
-## Changes
-- Server cards now show the detected city as the main title (for example, Frankfurt), with the flag kept at the left. The subscription remark/config name is no longer rendered.
-- The selected-server label on the home screen also shows the city/location instead of the config remark.
-- Ping colors are: 1–99 ms blue, 100–199 ms green, 200–499 ms yellow, 500+ ms red.
-- Added a listener for sing-box runtime connection errors so a tunnel that starts and then fails can show the core error in the app instead of only showing a generic connected state.
-- The app continues to pass the original share link to sing-box, preserving protocol-specific parameters such as TLS, Reality, Vision, transport, SNI and fingerprint options when present in the link.
+This source version replaces the previous `sing_box` Flutter dependency with `v2ray_box` and explicitly selects `Xray-core` at startup. The UI, subscription loading, server list, favorites, update checker, and existing display logic are retained.
 
-## Protocol support and limits
-The configured `sing_box` dependency documents support for VLESS, VMess, Trojan and Shadowsocks links, including common TLS/Reality/Vision and transport settings supported by the bundled sing-box core. Not every possible third-party config format or extension is supported (for example XHTTP, mKCP and ShadowsocksR are listed as unsupported by that core). A server can also fail because its endpoint, credentials, DNS, network, or server-side configuration is invalid.
+## Important Android build requirement
 
-## Important about the no-traffic issue
-This source-only archive adds runtime error reporting, but it cannot prove that traffic works without the full Android project and a real-device test using a valid server profile. If the tunnel says Connected but traffic remains at zero, the sing-box core logs and the exact profile are needed to identify whether the cause is routing, DNS, server reachability, or invalid credentials. Do not treat the connected label alone as proof that the proxy is carrying traffic.
+The `v2ray_box` package does not bundle native core files in its published package. An Android build must include the Xray AAR at `android/app/libs/libxray.aar`, plus the plugin's Android VPN service declaration and Gradle configuration. The original ZIP supplied for this migration did not include an `android/` project directory; its GitHub Actions workflow generates one during CI.
 
-## Ping accuracy
-The displayed pre-connection value is a TCP handshake-time estimate. It is not ICMP ping or end-to-end proxy latency. Values are kept real; dividing 200 ms to display 100 ms would be misleading and would not make the connection faster.
+Therefore this archive is a migrated Flutter source project, **not a tested APK**. A successful release build and real-device VPN test are still required before distributing it.
 
-## Apply
-1. Extract this ZIP.
-2. Replace `lib/main.dart` in the existing Flutter repository with `Leviko_VPN_Updated/lib/main.dart`.
-3. Keep the existing Android project files.
-4. Build and test on an Android device.
+## Core API
 
-This archive has not been built or tested on a physical Android device in this environment.
+- Core engine: Xray-core (`setCoreEngine('xray')`)
+- Connection: original share link passed to `V2rayBox.connect`
+- Status: `watchStatus()`
+- Traffic: `watchStats()`
+- Alerts: `watchAlerts()`
+
+The published plugin documents Android Xray integration through `libxray.aar` and the `VPNService` declaration. See the package documentation for the matching setup instructions.
