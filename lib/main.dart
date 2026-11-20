@@ -5,10 +5,12 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:sing_box/sing_box.dart';
+import 'package:v2ray_box/v2ray_box.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+
+final V2rayBox vpnCore = V2rayBox();
 
 const subscriptionUrl =
     'https://raw.githubusercontent.com/danesh1118/SS/refs/heads/main/CC';
@@ -20,13 +22,9 @@ const updateConfigUrl =
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await SingBox.instance.initialize(const SingBoxOptions(
-    android: SingBoxAndroidOptions(
-      notificationTitle: 'Leviko VPN',
-      showTrafficInNotification: true,
-      stopActionTitle: 'قطع اتصال',
-    ),
-  ));
+  await vpnCore.initialize(notificationStopButtonText: 'قطع اتصال');
+  // Use Xray-core only. The Android build must bundle libxray.aar.
+  await vpnCore.setCoreEngine('xray');
   runApp(const LevikoApp());
 }
 
@@ -65,6 +63,7 @@ class _LevikoAppState extends State<LevikoApp> {
   bool english = false;
   bool loading = true;
   bool busy = false;
+  bool coreActive = false;
   bool _checkingUpdate = true;
   bool _updateRequired = false;
   String _updateDownloadUrl = 'https://github.com/danesh1118/Levikovpn/releases/latest';
@@ -94,40 +93,41 @@ class _LevikoAppState extends State<LevikoApp> {
     super.initState();
     favoritesReady = _loadFavorites();
     unawaited(_checkMandatoryUpdate());
-    statusSub = SingBox.instance.watchConnectionStatus().listen((s) {
+    statusSub = vpnCore.watchStatus().listen((s) {
       if (!mounted) return;
-      setState(() => stateText = s == SingBoxConnectionStatus.connected
+      coreActive = s == VpnStatus.started;
+      setState(() => stateText = s == VpnStatus.started
           ? tr('متصل', 'Connected')
-          : s == SingBoxConnectionStatus.connecting
+          : (s == VpnStatus.starting || s == VpnStatus.stopping)
               ? tr('در حال اتصال', 'Connecting')
               : tr('قطع', 'Disconnected'));
-      if (s == SingBoxConnectionStatus.connected && connectedAt == null) {
+      if (s == VpnStatus.started && connectedAt == null) {
         connectedAt = DateTime.now();
         connectionSeconds = 0;
         connectionTimer?.cancel();
         connectionTimer = Timer.periodic(const Duration(seconds: 1), (_) {
           if (mounted && connectedAt != null) setState(() => connectionSeconds = DateTime.now().difference(connectedAt!).inSeconds);
         });
-      } else if (s != SingBoxConnectionStatus.connected) {
+      } else if (s != VpnStatus.started) {
         connectedAt = null;
         connectionTimer?.cancel();
         connectionSeconds = 0;
       }
     });
-    stateSub = SingBox.instance.watchConnectionState().listen((state) {
-      final error = state.error;
-      if (!mounted || error == null) return;
+    stateSub = vpnCore.watchAlerts().listen((alert) {
+      if (!mounted) return;
+      final error = alert['error'] ?? alert['message'] ?? alert.toString();
       setState(() {
         message = tr('خطای هسته VPN: $error', 'VPN core error: $error');
       });
     });
-    statsSub = SingBox.instance.watchConnectionStats().listen((stats) {
+    statsSub = vpnCore.watchStats().listen((stats) {
       if (!mounted) return;
       setState(() {
-        downBps = stats.downloadSpeed.toDouble();
-        upBps = stats.uploadSpeed.toDouble();
-        downTotal = stats.downloadTotal;
-        upTotal = stats.uploadTotal;
+        downBps = stats.downlink.toDouble();
+        upBps = stats.uplink.toDouble();
+        downTotal = stats.downlinkTotal;
+        upTotal = stats.uplinkTotal;
       });
     });
     loadSubscription();
@@ -489,7 +489,8 @@ class _LevikoAppState extends State<LevikoApp> {
     });
     try {
       // Pass the original share link unchanged, including VLESS flow parameters.
-      await SingBox.instance.connect(node.link);
+      final connected = await vpnCore.connect(node.link, name: node.name, notificationTitle: 'Leviko VPN');
+      if (!connected) throw Exception('Xray-core could not start the VPN connection');
       if (!mounted) return;
       setState(() {
         selected = node;
@@ -506,7 +507,7 @@ class _LevikoAppState extends State<LevikoApp> {
   Future<void> disconnect() async {
     setState(() => busy = true);
     try {
-      await SingBox.instance.disconnect();
+      await vpnCore.disconnect();
     } catch (_) {}
     if (mounted) setState(() {
       busy = false;
@@ -523,7 +524,7 @@ class _LevikoAppState extends State<LevikoApp> {
 
   @override
   Widget build(BuildContext context) {
-    final active = SingBox.instance.status.isActive;
+    final active = coreActive;
     return MaterialApp(
       navigatorKey: _navigatorKey,
       debugShowCheckedModeBanner: false,
