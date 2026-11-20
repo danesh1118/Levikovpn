@@ -260,7 +260,9 @@ class _LevikoAppState extends State<LevikoApp> {
     for (var i = 0; i < list.length; i += 6) {
       final batch = list.skip(i).take(6);
       await Future.wait(batch.map((n) async {
-        final pingFuture = _tcpPing(n.host, n.port);
+        // Test the complete proxy path through Xray, not only the TCP port.
+        // A reachable port with expired credentials/quota must not be shown as online.
+        final pingFuture = _configPing(n.link);
         final locationFuture = _lookupLocation(n);
         await locationFuture;
         n.pingMs = await pingFuture;
@@ -466,15 +468,13 @@ class _LevikoAppState extends State<LevikoApp> {
     );
   }
 
-  // Measures the real TCP handshake time; values are never divided or falsified.
-  Future<int?> _tcpPing(String host, int port) async {
-    final watch = Stopwatch()..start();
+  // Measures end-to-end proxy latency using the selected Xray core.
+  // Unlike a TCP handshake, this fails when the endpoint is reachable but the
+  // proxy cannot carry a real request (for example invalid/expired credentials).
+  Future<int?> _configPing(String link) async {
     try {
-      final socket = await Socket.connect(host, port,
-          timeout: const Duration(seconds: 3));
-      socket.destroy();
-      watch.stop();
-      return watch.elapsedMilliseconds;
+      final latency = await vpnCore.ping(link, timeout: 4000);
+      return latency > 0 ? latency : null;
     } catch (_) {
       return null;
     }
