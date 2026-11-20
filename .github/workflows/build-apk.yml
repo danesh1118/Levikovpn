@@ -3,8 +3,7 @@ name: Build LEVIKO VPN APK
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
 
 permissions:
   contents: write
@@ -12,8 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-
+    timeout-minutes: 90
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -21,7 +19,7 @@ jobs:
       - name: Install build utilities
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq unzip zip curl
+          sudo apt-get install -y jq unzip zip curl python3
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -29,7 +27,16 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Go for Xray
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
@@ -45,17 +52,14 @@ jobs:
         run: flutter create . --platforms=android --org com.leviko.vpn
 
       - name: Configure Android for v2ray_box
-        shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
-
           manifest = Path('android/app/src/main/AndroidManifest.xml')
-          text = manifest.read_text(encoding='utf-8')
+          text = manifest.read_text()
           if 'xmlns:tools=' not in text:
               text = text.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ', 1)
-
           permissions = [
               'android.permission.INTERNET',
               'android.permission.FOREGROUND_SERVICE',
@@ -67,125 +71,122 @@ jobs:
           ]
           for permission in permissions:
               if f'android:name="{permission}"' not in text:
-                  text = text.replace(
-                      '<application',
-                      f'<uses-permission android:name="{permission}" />\n    <application',
-                      1,
-                  )
-
+                  text = text.replace('<application', f'<uses-permission android:name="{permission}" />\n    <application', 1)
           if 'com.example.v2ray_box.bg.VPNService' not in text:
               services = '''
-                  <service
-                      android:name="com.example.v2ray_box.bg.VPNService"
-                      android:exported="false"
-                      android:foregroundServiceType="specialUse"
+                  <service android:name="com.example.v2ray_box.bg.VPNService"
+                      android:exported="false" android:foregroundServiceType="specialUse"
                       android:permission="android.permission.BIND_VPN_SERVICE">
-                      <intent-filter>
-                          <action android:name="android.net.VpnService" />
-                      </intent-filter>
-                      <property
-                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                          android:value="vpn" />
+                      <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
+                      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="vpn" />
                   </service>
-                  <service
-                      android:name="com.example.v2ray_box.bg.ProxyService"
-                      android:exported="false"
-                      android:foregroundServiceType="specialUse">
-                      <property
-                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                          android:value="proxy" />
+                  <service android:name="com.example.v2ray_box.bg.ProxyService"
+                      android:exported="false" android:foregroundServiceType="specialUse">
+                      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="proxy" />
                   </service>'''
-              text = text.replace('</application>', services + '\n    </application>')
-
-          text = re.sub(
-              r'<application\b',
-              '<application android:usesCleartextTraffic="true"',
-              text,
-              count=1,
-          )
+              text = text.replace('</application>', services + '\n</application>')
+          text = re.sub(r'<application\b', '<application android:usesCleartextTraffic="true"', text, count=1)
           text = re.sub(r'android:label="[^"]*"', 'android:label="Leviko VPN"', text, count=1)
-          manifest.write_text(text, encoding='utf-8')
-
-          gradle_candidates = [Path('android/app/build.gradle.kts'), Path('android/app/build.gradle')]
-          gradle = next((path for path in gradle_candidates if path.exists()), None)
-          if gradle is None:
-              raise SystemExit('Could not find android/app Gradle build file')
-
-          content = gradle.read_text(encoding='utf-8')
+          manifest.write_text(text)
+          gradle = next((p for p in [Path('android/app/build.gradle.kts'), Path('android/app/build.gradle')] if p.exists()), None)
+          if gradle is None: raise SystemExit('App Gradle file not found')
+          g = gradle.read_text()
           if gradle.suffix == '.kts':
-              if 'multiDexEnabled' not in content:
-                  content = re.sub(
-                      r'defaultConfig\s*\{',
-                      'defaultConfig {\n        multiDexEnabled = true',
-                      content,
-                      count=1,
-                  )
-              if 'useLegacyPackaging' not in content:
-                  content = re.sub(
-                      r'android\s*\{',
-                      'android {\n    packaging {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }',
-                      content,
-                      count=1,
-                  )
-              if 'dir" to "libs"' not in content:
-                  content += '\ndependencies {\n    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))\n}\n'
+              if 'multiDexEnabled' not in g: g = re.sub(r'defaultConfig\s*\{', 'defaultConfig {\n        multiDexEnabled = true', g, count=1)
+              if 'useLegacyPackaging' not in g: g = re.sub(r'android\s*\{', 'android {\n    packaging { jniLibs { useLegacyPackaging = true } }', g, count=1)
+              if 'dir" to "libs"' not in g: g += '\ndependencies { implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar")))) }\n'
           else:
-              if 'multiDexEnabled' not in content:
-                  content = re.sub(
-                      r'defaultConfig\s*\{',
-                      'defaultConfig {\n        multiDexEnabled true',
-                      content,
-                      count=1,
-                  )
-              if 'useLegacyPackaging' not in content:
-                  content = re.sub(
-                      r'android\s*\{',
-                      'android {\n    packaging {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }',
-                      content,
-                      count=1,
-                  )
-              if "fileTree(dir: 'libs'" not in content:
-                  content += "\ndependencies {\n    implementation fileTree(dir: 'libs', include: ['*.aar'])\n}\n"
-
-          gradle.write_text(content, encoding='utf-8')
+              if 'multiDexEnabled' not in g: g = re.sub(r'defaultConfig\s*\{', 'defaultConfig {\n        multiDexEnabled true', g, count=1)
+              if 'useLegacyPackaging' not in g: g = re.sub(r'android\s*\{', 'android {\n    packaging { jniLibs { useLegacyPackaging = true } }', g, count=1)
+              if "fileTree(dir: 'libs'" not in g: g += "\ndependencies { implementation fileTree(dir: 'libs', include: ['*.aar']) }\n"
+          gradle.write_text(g)
           PY
 
-      - name: Verify app icon
-        run: test -s assets/icon/app_icon.png
+      - name: Verify source
+        run: |
+          test -s pubspec.yaml
+          test -s lib/main.dart
+          test -s assets/icon/app_icon.png
 
       - name: Install Flutter dependencies
         run: flutter pub get
 
-      - name: Build Xray Android library (libxray.aar)
-        shell: bash
+      - name: Download v2ray_box Xray build script
         run: |
           mkdir -p scripts android/app/libs
-          curl --fail --location --silent --show-error \
-            https://raw.githubusercontent.com/pesaregorg/v2ray_box/main/example/scripts/build_android_libxray.sh \
-            --output scripts/build_android_libxray.sh
+          curl -fsSL https://raw.githubusercontent.com/pesaregorg/v2ray_box/v1.0.6/example/scripts/build_android_libxray.sh -o scripts/build_android_libxray.sh
           chmod +x scripts/build_android_libxray.sh
-          bash scripts/build_android_libxray.sh --android-abis arm64-v8a,x86_64
-          echo 'Checking generated Xray AAR:'
-          ls -lh android/app/libs/
+
+      - name: Patch obsolete libXray wrapper API
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/build_android_libxray.sh')
+          s = p.read_text()
+          pairs = [
+              ('"github.com/xtls/libxray/nodep"', '"encoding/base64"\n\t"encoding/json"\n\t"github.com/xtls/libxray/nodep"'),
+              ('var response nodep.CallResponse[int64]', ''),
+              ('return response.EncodeToBase64(nodep.PingDelayError, fmt.Errorf("empty config JSON"))', 'return encodeAndroidCallResponse(nodep.PingDelayError, fmt.Errorf("empty config JSON"))'),
+              ('return response.EncodeToBase64(delay, err)', 'return encodeAndroidCallResponse(delay, err)'),
+          ]
+          for old, new in pairs:
+              if s.count(old) != 1:
+                  raise SystemExit(f'Patch expected one match but found {s.count(old)}: {old}')
+              s = s.replace(old, new, 1)
+          helper_lines = [
+              'type androidCallResponse struct {',
+              '    Success bool   `json:"success"`',
+              '    Data    int64  `json:"data,omitempty"`',
+              '    Err     string `json:"error,omitempty"`',
+              '}',
+              '',
+              'func encodeAndroidCallResponse(data int64, err error) string {',
+              '    response := androidCallResponse{Success: err == nil, Data: data}',
+              '    if err != nil { response.Err = err.Error() }',
+              '    payload, marshalErr := json.Marshal(response)',
+              '    if marshalErr != nil {',
+              '        fallback, _ := json.Marshal(androidCallResponse{Success: false, Err: marshalErr.Error()})',
+              '        return base64.StdEncoding.EncodeToString(fallback)',
+              '    }',
+              '    return base64.StdEncoding.EncodeToString(payload)',
+              '}',
+              '',
+          ]
+          helper = '\n'.join(helper_lines)
+          marker = '// SetTunFd updates xray.tun.fd inside Go runtime env map.'
+          if s.count(marker) != 1: raise SystemExit('Android wrapper insertion point not found')
+          s = s.replace(marker, helper + marker, 1)
+          if 'nodep.CallResponse' in s or 'response.EncodeToBase64' in s:
+              raise SystemExit('Old API references remain after patch')
+          p.write_text(s)
+          print('Compatibility wrapper patched successfully.')
+          PY
+
+      - name: Build Xray Android library
+        run: |
+          bash scripts/build_android_libxray.sh --project-root "$GITHUB_WORKSPACE" --android-abis arm64-v8a,x86_64
           test -s android/app/libs/libxray.aar
+          unzip -l android/app/libs/libxray.aar | grep -E 'jni/(arm64-v8a|x86_64)/libgojni.so'
 
       - name: Generate launcher icons
         run: |
           dart pub global activate flutter_launcher_icons
-          cat > flutter_launcher_icons.yaml <<'ICON_CONFIG'
+          cat > flutter_launcher_icons.yaml <<'YAML'
           flutter_launcher_icons:
             android: true
             ios: false
-            image_path: 'assets/icon/app_icon.png'
+            image_path: "assets/icon/app_icon.png"
             min_sdk_android: 21
-          ICON_CONFIG
+          YAML
           dart pub global run flutter_launcher_icons -f flutter_launcher_icons.yaml
 
       - name: Build release APK
         run: flutter build apk --release
 
       - name: Prepare APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk leviko-vpn.apk
+        run: |
+          test -s build/app/outputs/flutter-apk/app-release.apk
+          cp build/app/outputs/flutter-apk/app-release.apk leviko-vpn.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -197,13 +198,9 @@ jobs:
 
       - name: Read app version
         id: app_version
-        shell: bash
         run: |
-          VERSION="$(sed -n 's/^version: *\\([^+ ]*\\).*/\\1/p' pubspec.yaml)"
-          if [ -z "$VERSION" ]; then
-            echo 'Could not read app version from pubspec.yaml'
-            exit 1
-          fi
+          VERSION="$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' pubspec.yaml)"
+          test -n "$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -212,7 +209,7 @@ jobs:
         with:
           tag_name: ${{ steps.app_version.outputs.tag }}
           name: Leviko VPN ${{ steps.app_version.outputs.version }}
-          body: 'Leviko VPN release built with the Xray core.'
+          body: 'Leviko VPN release built with Xray-core.'
           files: leviko-vpn.apk
           overwrite_files: true
           make_latest: true
