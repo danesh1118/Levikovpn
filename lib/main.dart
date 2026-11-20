@@ -42,6 +42,7 @@ class Node {
   int? pingMs;
   String city = '';
   String countryCode = '';
+  String resolvedIp = '';
   double? latitude;
   double? longitude;
   bool favorite = false;
@@ -258,21 +259,34 @@ class _LevikoAppState extends State<LevikoApp> {
 
   Future<void> _enrichNodes(List<Node> list) async {
     for (var i = 0; i < list.length; i += 6) {
-      final batch = list.skip(i).take(6);
+      final batch = list.skip(i).take(6).toList();
+      // Run TCP ping and DNS/IP lookup concurrently. Do not make the ping UI
+      // wait for the slower geolocation HTTP request.
       await Future.wait(batch.map((n) async {
-        // Test the complete proxy path through Xray, not only the TCP port.
-        // A reachable port with expired credentials/quota must not be shown as online.
-        final pingFuture = _configPing(n.link);
+        final pingFuture = _tcpPing(n.host, n.port);
         final locationFuture = _lookupLocation(n);
-        await locationFuture;
         n.pingMs = await pingFuture;
+        if (mounted) {
+          setState(() {
+            final sorted = [...nodes]..sort((a, b) => (a.pingMs ?? 999999).compareTo(b.pingMs ?? 999999));
+            nodes = sorted;
+            if (selected != null) {
+              final match = nodes.where((x) => _nodeKey(x) == _nodeKey(selected!));
+              if (match.isNotEmpty) selected = match.first;
+            }
+          });
+        }
+        await locationFuture;
       }));
       if (!mounted) return;
       setState(() {
-        final sorted = [...nodes]..sort((a,b) => (a.pingMs ?? 999999).compareTo(b.pingMs ?? 999999));
+        final sorted = [...nodes]..sort((a, b) => (a.pingMs ?? 999999).compareTo(b.pingMs ?? 999999));
         nodes = sorted;
-        if (selected != null) { final match = nodes.where((x) => _nodeKey(x) == _nodeKey(selected!)); if (match.isNotEmpty) selected = match.first; }
-        message = tr('سرورها آماده‌اند • پینگ و موقعیت به‌روزرسانی شد', 'Servers ready • ping and locations updated');
+        if (selected != null) {
+          final match = nodes.where((x) => _nodeKey(x) == _nodeKey(selected!));
+          if (match.isNotEmpty) selected = match.first;
+        }
+        message = tr('سرورها آماده‌اند • پینگ و IP به‌روزرسانی شد', 'Servers ready • ping and IP updated');
       });
     }
   }
@@ -376,6 +390,7 @@ class _LevikoAppState extends State<LevikoApp> {
           .timeout(const Duration(seconds: 4));
       if (addresses.isEmpty) return;
       final ip = addresses.first.address;
+      node.resolvedIp = ip;
       final response = await http.get(Uri.parse('https://ipwho.is/$ip'))
           .timeout(const Duration(seconds: 5));
       if (response.statusCode != 200) return;
@@ -468,13 +483,15 @@ class _LevikoAppState extends State<LevikoApp> {
     );
   }
 
-  // Measures end-to-end proxy latency using the selected Xray core.
-  // Unlike a TCP handshake, this fails when the endpoint is reachable but the
-  // proxy cannot carry a real request (for example invalid/expired credentials).
-  Future<int?> _configPing(String link) async {
+  // Measures the real TCP handshake time; values are never divided or falsified.
+  Future<int?> _tcpPing(String host, int port) async {
+    final watch = Stopwatch()..start();
     try {
-      final latency = await vpnCore.ping(link, timeout: 4000);
-      return latency > 0 ? latency : null;
+      final socket = await Socket.connect(host, port,
+          timeout: const Duration(seconds: 3));
+      socket.destroy();
+      watch.stop();
+      return watch.elapsedMilliseconds;
     } catch (_) {
       return null;
     }
@@ -974,7 +991,12 @@ class _ServerPickerSheetState extends State<_ServerPickerSheet> {
                     onTap: () => widget.onSelect(n),
                     leading: Text(n.flag, style: const TextStyle(fontSize: 26)),
                     title: Text(widget.cityLabel(n), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-                    subtitle: Text(n.location, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white60, fontSize: 12)),
+                    subtitle: Text(
+                      [n.location, if (n.resolvedIp.isNotEmpty) n.resolvedIp].where((v) => v.trim().isNotEmpty).join(' • '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white60, fontSize: 12),
+                    ),
                     trailing: SizedBox(width: 112, child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
                       Expanded(child: Text(n.pingMs == null ? '…' : '${_displayPing(n.pingMs)} ms', textAlign: TextAlign.end, style: TextStyle(color: _pingColor(_displayPing(n.pingMs)), fontWeight: FontWeight.bold))),
                       IconButton(tooltip: widget.tr('علاقه‌مندی', 'Favorite'), onPressed: () => widget.onFavorite(n), icon: Icon(n.favorite ? Icons.star : Icons.star_border, color: n.favorite ? Colors.amber : Colors.white54)),
