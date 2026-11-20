@@ -154,23 +154,9 @@ jobs:
               raise SystemExit('Could not locate end of embedded Android compatibility wrapper')
           wrapper = '''package libXray
 
-          import (
-              "os"
-              "strconv"
-              "github.com/xtls/xray-core/common/platform"
-          )
-
-          // SetTunFd is retained for compatibility with v2ray_box 1.0.6.
-          // Newer libXray uses the same xray.tun.fd value in the config env.
-          func SetTunFd(fd int) {
-              if fd < 0 { fd = 0 }
-              value := strconv.Itoa(fd)
-              _ = os.Setenv(platform.TunFdKey, value)
-              _ = os.Setenv(platform.NormalizeEnvName(platform.TunFdKey), value)
-          }
-
-          // v2ray_box 1.0.6 still binds this legacy symbol. LEVIKO uses its own
-          // TCP latency check, so keep the symbol but do not call the removed API.
+          // Compatibility symbol required by v2ray_box 1.0.6.
+          // SetTunFd is already exported by upstream xray_wrapper.go;
+          // do not redeclare it here or Go reports a duplicate symbol.
           func MeasureOutboundDelay(configJSON string, url string, timeoutSec int64) string {
               return ""
           }
@@ -179,15 +165,17 @@ jobs:
           s = s[:start] + wrapper + s[end:]
           if 'nodep.CallResponse' in s:
               raise SystemExit('Obsolete nodep.CallResponse API is still present after patch')
-          if 'func SetTunFd(fd int)' not in s or 'func MeasureOutboundDelay(configJSON string, url string, timeoutSec int64) string' not in s:
+          if 'func SetTunFd(fd int)' in wrapper:
+              raise SystemExit('Do not redeclare SetTunFd; upstream xray_wrapper.go already exports it')
+          if 'func MeasureOutboundDelay(configJSON string, url string, timeoutSec int64) string' not in wrapper:
               raise SystemExit('Android compatibility wrapper verification failed')
           p.write_text(s, encoding='utf-8')
           PYCODE
           chmod +x scripts/build_android_libxray.sh
           echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-$ANDROID_NDK_ROOT}" >> "$GITHUB_ENV"
 
-      # v2ray_box 1.0.6 Android Kotlin bridge uses the legacy gomobile API.
-      # Pin libXray before its newer Invoke-only API to keep the AAR ABI compatible.
+      # v2ray_box 1.0.6 requires compatibility symbols. The upstream wrapper
+      # already exports SetTunFd; the compatibility file must not redeclare it.
       - name: Build Xray Android library
         shell: bash
         env:
