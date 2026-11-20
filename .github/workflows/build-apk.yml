@@ -8,10 +8,15 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: leviko-android-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -27,39 +32,22 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          # GitHub-hosted Ubuntu runners already include Android command-line tools.
-          # Do not use android-actions/setup-android here: its default package list
-          # requests the obsolete package "tools", which now fails in sdkmanager.
-          export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          export ANDROID_SDK_ROOT="$ANDROID_HOME"
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
-
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
-          if [ -z "$SDKMANAGER" ]; then
-            echo "sdkmanager was not found under $ANDROID_HOME/cmdline-tools"
-            exit 1
-          fi
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --install \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0" \
-            "ndk;28.2.13676358"
-
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
-          test -d "$ANDROID_HOME/ndk/28.2.13676358"
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.x'
+          go-version: stable
+          check-latest: true
           cache: false
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Set up Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r30
+          add-to-path: true
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -71,12 +59,14 @@ jobs:
         run: flutter create . --platforms=android --org com.leviko.vpn
 
       - name: Configure Android for v2ray_box
+        shell: bash
         run: |
-          python3 - <<'PY'
+          python3 - <<'PYCODE'
           from pathlib import Path
           import re
+
           manifest = Path('android/app/src/main/AndroidManifest.xml')
-          text = manifest.read_text()
+          text = manifest.read_text(encoding='utf-8')
           if 'xmlns:tools=' not in text:
               text = text.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ', 1)
           permissions = [
@@ -93,119 +83,151 @@ jobs:
                   text = text.replace('<application', f'<uses-permission android:name="{permission}" />\n    <application', 1)
           if 'com.example.v2ray_box.bg.VPNService' not in text:
               services = '''
-                  <service android:name="com.example.v2ray_box.bg.VPNService"
-                      android:exported="false" android:foregroundServiceType="specialUse"
+                  <service
+                      android:name="com.example.v2ray_box.bg.VPNService"
+                      android:exported="false"
+                      android:foregroundServiceType="specialUse"
                       android:permission="android.permission.BIND_VPN_SERVICE">
-                      <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
+                      <intent-filter>
+                          <action android:name="android.net.VpnService" />
+                      </intent-filter>
                       <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="vpn" />
                   </service>
-                  <service android:name="com.example.v2ray_box.bg.ProxyService"
-                      android:exported="false" android:foregroundServiceType="specialUse">
+                  <service
+                      android:name="com.example.v2ray_box.bg.ProxyService"
+                      android:exported="false"
+                      android:foregroundServiceType="specialUse">
                       <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="proxy" />
                   </service>'''
-              text = text.replace('</application>', services + '\n</application>')
+              text = text.replace('</application>', services + '\n    </application>')
           text = re.sub(r'<application\b', '<application android:usesCleartextTraffic="true"', text, count=1)
           text = re.sub(r'android:label="[^"]*"', 'android:label="Leviko VPN"', text, count=1)
-          manifest.write_text(text)
-          gradle = next((p for p in [Path('android/app/build.gradle.kts'), Path('android/app/build.gradle')] if p.exists()), None)
-          if gradle is None: raise SystemExit('App Gradle file not found')
-          g = gradle.read_text()
-          if gradle.suffix == '.kts':
-              if 'multiDexEnabled' not in g: g = re.sub(r'defaultConfig\s*\{', 'defaultConfig {\n        multiDexEnabled = true', g, count=1)
-              if 'useLegacyPackaging' not in g: g = re.sub(r'android\s*\{', 'android {\n    packaging { jniLibs { useLegacyPackaging = true } }', g, count=1)
-              if 'dir" to "libs"' not in g: g += '\ndependencies { implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar")))) }\n'
-          else:
-              if 'multiDexEnabled' not in g: g = re.sub(r'defaultConfig\s*\{', 'defaultConfig {\n        multiDexEnabled true', g, count=1)
-              if 'useLegacyPackaging' not in g: g = re.sub(r'android\s*\{', 'android {\n    packaging { jniLibs { useLegacyPackaging = true } }', g, count=1)
-              if "fileTree(dir: 'libs'" not in g: g += "\ndependencies { implementation fileTree(dir: 'libs', include: ['*.aar']) }\n"
-          gradle.write_text(g)
-          PY
+          manifest.write_text(text, encoding='utf-8')
 
-      - name: Verify source
-        run: |
-          test -s pubspec.yaml
-          test -s lib/main.dart
-          test -s assets/icon/app_icon.png
+          candidates = [Path('android/app/build.gradle.kts'), Path('android/app/build.gradle')]
+          gradle = next((p for p in candidates if p.exists()), None)
+          if gradle is None:
+              raise SystemExit('android/app Gradle file not found')
+          content = gradle.read_text(encoding='utf-8')
+          if gradle.suffix == '.kts':
+              if 'multiDexEnabled' not in content:
+                  content = re.sub(r'defaultConfig\s*\{', 'defaultConfig {\n        multiDexEnabled = true', content, count=1)
+              if 'useLegacyPackaging' not in content:
+                  content = re.sub(r'android\s*\{', 'android {\n    packaging {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }', content, count=1)
+              if 'fileTree(mapOf("dir" to "libs"' not in content:
+                  content += '\ndependencies {\n    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))\n}\n'
+          else:
+              if 'multiDexEnabled' not in content:
+                  content = re.sub(r'defaultConfig\s*\{', 'defaultConfig {\n        multiDexEnabled true', content, count=1)
+              if 'useLegacyPackaging' not in content:
+                  content = re.sub(r'android\s*\{', 'android {\n    packaging {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n    }', content, count=1)
+              if "fileTree(dir: 'libs'" not in content:
+                  content += "\ndependencies {\n    implementation fileTree(dir: 'libs', include: ['*.aar'])\n}\n"
+          gradle.write_text(content, encoding='utf-8')
+          PYCODE
+
+      - name: Verify app assets
+        run: test -s assets/icon/app_icon.png
 
       - name: Install Flutter dependencies
         run: flutter pub get
 
-      - name: Download v2ray_box Xray build script
+      - name: Download and patch v2ray_box Xray builder
+        shell: bash
         run: |
           mkdir -p scripts android/app/libs
-          curl -fsSL https://raw.githubusercontent.com/pesaregorg/v2ray_box/v1.0.6/example/scripts/build_android_libxray.sh -o scripts/build_android_libxray.sh
-          chmod +x scripts/build_android_libxray.sh
-
-      - name: Patch obsolete libXray wrapper API
-        run: |
-          python3 - <<'PY'
+          curl --retry 5 --retry-all-errors --retry-delay 2 -fsSL \
+            https://raw.githubusercontent.com/pesaregorg/v2ray_box/main/example/scripts/build_android_libxray.sh \
+            -o scripts/build_android_libxray.sh
+          python3 - <<'PYCODE'
           from pathlib import Path
           p = Path('scripts/build_android_libxray.sh')
-          s = p.read_text()
-          pairs = [
-              ('"github.com/xtls/libxray/nodep"', '"encoding/base64"\n\t"encoding/json"\n\t"github.com/xtls/libxray/nodep"'),
-              ('var response nodep.CallResponse[int64]', ''),
-              ('return response.EncodeToBase64(nodep.PingDelayError, fmt.Errorf("empty config JSON"))', 'return encodeAndroidCallResponse(nodep.PingDelayError, fmt.Errorf("empty config JSON"))'),
-              ('return response.EncodeToBase64(delay, err)', 'return encodeAndroidCallResponse(delay, err)'),
-          ]
-          for old, new in pairs:
-              if s.count(old) != 1:
-                  raise SystemExit(f'Patch expected one match but found {s.count(old)}: {old}')
-              s = s.replace(old, new, 1)
-          helper_lines = [
-              'type androidCallResponse struct {',
-              '    Success bool   `json:"success"`',
-              '    Data    int64  `json:"data,omitempty"`',
-              '    Err     string `json:"error,omitempty"`',
-              '}',
-              '',
-              'func encodeAndroidCallResponse(data int64, err error) string {',
-              '    response := androidCallResponse{Success: err == nil, Data: data}',
-              '    if err != nil { response.Err = err.Error() }',
-              '    payload, marshalErr := json.Marshal(response)',
-              '    if marshalErr != nil {',
-              '        fallback, _ := json.Marshal(androidCallResponse{Success: false, Err: marshalErr.Error()})',
-              '        return base64.StdEncoding.EncodeToString(fallback)',
-              '    }',
-              '    return base64.StdEncoding.EncodeToString(payload)',
-              '}',
-              '',
-          ]
-          helper = '\n'.join(helper_lines)
-          marker = '// SetTunFd updates xray.tun.fd inside Go runtime env map.'
-          if s.count(marker) != 1: raise SystemExit('Android wrapper insertion point not found')
-          s = s.replace(marker, helper + marker, 1)
-          if 'nodep.CallResponse' in s or 'response.EncodeToBase64' in s:
-              raise SystemExit('Old API references remain after patch')
-          p.write_text(s)
-          print('Compatibility wrapper patched successfully.')
-          PY
+          s = p.read_text(encoding='utf-8')
+          marker = "  cat >\"$patch_file\" <<'EOF'\n"
+          start = s.find(marker)
+          if start < 0:
+              raise SystemExit('Could not locate embedded Android compatibility wrapper in upstream builder')
+          start += len(marker)
+          end_marker = '\nEOF\n  log "Injected Android compatibility APIs into libXray source: ${patch_file}"'
+          end = s.find(end_marker, start)
+          if end < 0:
+              raise SystemExit('Could not locate end of embedded Android compatibility wrapper')
+          wrapper = '''package libXray
+
+          import (
+              "os"
+              "strconv"
+              "github.com/xtls/xray-core/common/platform"
+          )
+
+          // SetTunFd is retained for compatibility with v2ray_box 1.0.6.
+          // Newer libXray uses the same xray.tun.fd value in the config env.
+          func SetTunFd(fd int) {
+              if fd < 0 { fd = 0 }
+              value := strconv.Itoa(fd)
+              _ = os.Setenv(platform.TunFdKey, value)
+              _ = os.Setenv(platform.NormalizeEnvName(platform.TunFdKey), value)
+          }
+
+          // v2ray_box 1.0.6 still binds this legacy symbol. LEVIKO uses its own
+          // TCP latency check, so keep the symbol but do not call the removed API.
+          func MeasureOutboundDelay(configJSON string, url string, timeoutSec int64) string {
+              return ""
+          }
+          '''
+          # Keep heredoc delimiters and logging line from the upstream script.
+          s = s[:start] + wrapper + s[end:]
+          if 'nodep.CallResponse' in s:
+              raise SystemExit('Obsolete nodep.CallResponse API is still present after patch')
+          if 'func SetTunFd(fd int)' not in s or 'func MeasureOutboundDelay(configJSON string, url string, timeoutSec int64) string' not in s:
+              raise SystemExit('Android compatibility wrapper verification failed')
+          p.write_text(s, encoding='utf-8')
+          PYCODE
+          chmod +x scripts/build_android_libxray.sh
+          echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-$ANDROID_NDK_ROOT}" >> "$GITHUB_ENV"
 
       - name: Build Xray Android library
+        shell: bash
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
         run: |
-          bash scripts/build_android_libxray.sh --project-root "$GITHUB_WORKSPACE" --android-abis arm64-v8a,x86_64
+          set -euo pipefail
+          export GOPROXY=https://proxy.golang.org,direct
+          built=false
+          for attempt in 1 2 3; do
+            echo "Xray AAR build attempt ${attempt}/3"
+            if bash scripts/build_android_libxray.sh --android-abis arm64-v8a,x86_64; then
+              built=true
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Build attempt failed; retrying after 12 seconds (network/geodata downloads can be transient)."
+              sleep 12
+            fi
+          done
+          [ "$built" = true ] || { echo 'Xray AAR build failed after 3 attempts'; exit 1; }
           test -s android/app/libs/libxray.aar
-          unzip -l android/app/libs/libxray.aar | grep -E 'jni/(arm64-v8a|x86_64)/libgojni.so'
+          echo 'Generated AAR contents:'
+          unzip -l android/app/libs/libxray.aar | grep -E 'jni/(arm64-v8a|x86_64)/'
 
       - name: Generate launcher icons
         run: |
           dart pub global activate flutter_launcher_icons
-          cat > flutter_launcher_icons.yaml <<'YAML'
+          cat > flutter_launcher_icons.yaml <<'ICON_CONFIG'
           flutter_launcher_icons:
             android: true
             ios: false
-            image_path: "assets/icon/app_icon.png"
+            image_path: 'assets/icon/app_icon.png'
             min_sdk_android: 21
-          YAML
+          ICON_CONFIG
           dart pub global run flutter_launcher_icons -f flutter_launcher_icons.yaml
 
       - name: Build release APK
         run: flutter build apk --release
 
       - name: Prepare APK
-        run: |
-          test -s build/app/outputs/flutter-apk/app-release.apk
-          cp build/app/outputs/flutter-apk/app-release.apk leviko-vpn.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk leviko-vpn.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -217,6 +239,7 @@ jobs:
 
       - name: Read app version
         id: app_version
+        shell: bash
         run: |
           VERSION="$(sed -n 's/^version: *\([^+ ]*\).*/\1/p' pubspec.yaml)"
           test -n "$VERSION"
@@ -227,8 +250,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.app_version.outputs.tag }}
-          name: Leviko VPN ${{ steps.app_version.outputs.version }}
-          body: 'Leviko VPN release built with Xray-core.'
+          name: LEVIKO VPN ${{ steps.app_version.outputs.version }}
+          body: 'LEVIKO VPN Android build using Xray-core through v2ray_box.'
           files: leviko-vpn.apk
           overwrite_files: true
           make_latest: true
