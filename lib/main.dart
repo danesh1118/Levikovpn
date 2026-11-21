@@ -26,6 +26,9 @@ Future<void> main() async {
   // LEVIKO runs Xray-core only; sing-box is not selected or bundled.
   final selected = await vpnCore.setCoreEngine('xray');
   await vpnCore.setServiceMode(VpnMode.vpn);
+  // Use the same widely-used true-delay endpoint as v2rayNG. The plugin's
+  // default gstatic endpoint can fail on some networks even when proxies work.
+  await vpnCore.setPingTestUrl('https://www.google.com/generate_204');
   if (!selected) {
     throw StateError('Could not select Xray-core');
   }
@@ -490,8 +493,8 @@ class _LevikoAppState extends State<LevikoApp> {
     try {
       final latency = await vpnCore.ping(
         link,
-        timeout: 5000,
-      ).timeout(const Duration(seconds: 7));
+        timeout: 10000,
+      ).timeout(const Duration(seconds: 12));
       return latency >= 0 ? latency : null;
     } catch (_) {
       return null;
