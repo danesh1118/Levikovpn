@@ -26,8 +26,6 @@ Future<void> main() async {
   // LEVIKO runs Xray-core only; sing-box is not selected or bundled.
   final selected = await vpnCore.setCoreEngine('xray');
   await vpnCore.setServiceMode(VpnMode.vpn);
-  // Use the standard generate_204 endpoint for a real Xray outbound probe.
-  await vpnCore.setPingTestUrl('https://www.gstatic.com/generate_204');
   if (!selected) {
     throw StateError('Could not select Xray-core');
   }
@@ -42,10 +40,9 @@ class Node {
   final String host;
   final int port;
   int? pingMs;
-  bool pingDone = false;
   String city = '';
+  String ipAddress = '';
   String countryCode = '';
-  String resolvedIp = '';
   double? latitude;
   double? longitude;
   bool favorite = false;
@@ -262,35 +259,19 @@ class _LevikoAppState extends State<LevikoApp> {
 
   Future<void> _enrichNodes(List<Node> list) async {
     for (var i = 0; i < list.length; i += 6) {
-      final batch = list.skip(i).take(6).toList();
-      // Run the real Xray proxy-delay test and DNS/IP lookup concurrently.
-      // wait for the slower geolocation HTTP request.
+      final batch = list.skip(i).take(6);
       await Future.wait(batch.map((n) async {
-        final pingFuture = _realProxyPing(n.link);
+        final pingFuture = _tcpPing(n.host, n.port);
         final locationFuture = _lookupLocation(n);
-        n.pingMs = await pingFuture;
-        n.pingDone = true;
-        if (mounted) {
-          setState(() {
-            final sorted = [...nodes]..sort((a, b) => (a.pingMs ?? 999999).compareTo(b.pingMs ?? 999999));
-            nodes = sorted;
-            if (selected != null) {
-              final match = nodes.where((x) => _nodeKey(x) == _nodeKey(selected!));
-              if (match.isNotEmpty) selected = match.first;
-            }
-          });
-        }
         await locationFuture;
+        n.pingMs = await pingFuture;
       }));
       if (!mounted) return;
       setState(() {
-        final sorted = [...nodes]..sort((a, b) => (a.pingMs ?? 999999).compareTo(b.pingMs ?? 999999));
+        final sorted = [...nodes]..sort((a,b) => (a.pingMs ?? 999999).compareTo(b.pingMs ?? 999999));
         nodes = sorted;
-        if (selected != null) {
-          final match = nodes.where((x) => _nodeKey(x) == _nodeKey(selected!));
-          if (match.isNotEmpty) selected = match.first;
-        }
-        message = tr('سرورها آماده‌اند • پینگ و IP به‌روزرسانی شد', 'Servers ready • ping and IP updated');
+        if (selected != null) { final match = nodes.where((x) => _nodeKey(x) == _nodeKey(selected!)); if (match.isNotEmpty) selected = match.first; }
+        message = tr('سرورها آماده‌اند • پینگ و موقعیت به‌روزرسانی شد', 'Servers ready • ping and locations updated');
       });
     }
   }
@@ -393,8 +374,12 @@ class _LevikoAppState extends State<LevikoApp> {
       final addresses = await InternetAddress.lookup(node.host)
           .timeout(const Duration(seconds: 4));
       if (addresses.isEmpty) return;
-      final ip = addresses.first.address;
-      node.resolvedIp = ip;
+      final resolved = addresses.firstWhere(
+        (address) => address.type == InternetAddressType.IPv4,
+        orElse: () => addresses.first,
+      );
+      final ip = resolved.address;
+      node.ipAddress = ip;
       final response = await http.get(Uri.parse('https://ipwho.is/$ip'))
           .timeout(const Duration(seconds: 5));
       if (response.statusCode != 200) return;
@@ -487,16 +472,15 @@ class _LevikoAppState extends State<LevikoApp> {
     );
   }
 
-  // Real proxy delay test: route an HTTP probe through this exact config
-  // using the Xray core. A TCP handshake alone is not enough: expired users
-  // can still have an open server port while proxy traffic is rejected.
-  Future<int?> _realProxyPing(String link) async {
+  // Measures the real TCP handshake time; values are never divided or falsified.
+  Future<int?> _tcpPing(String host, int port) async {
+    final watch = Stopwatch()..start();
     try {
-      final latency = await vpnCore.ping(
-        link,
-        timeout: 10000,
-      ).timeout(const Duration(seconds: 12));
-      return latency >= 0 ? latency : null;
+      final socket = await Socket.connect(host, port,
+          timeout: const Duration(seconds: 3));
+      socket.destroy();
+      watch.stop();
+      return watch.elapsedMilliseconds;
     } catch (_) {
       return null;
     }
@@ -997,13 +981,13 @@ class _ServerPickerSheetState extends State<_ServerPickerSheet> {
                     leading: Text(n.flag, style: const TextStyle(fontSize: 26)),
                     title: Text(widget.cityLabel(n), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
                     subtitle: Text(
-                      [n.location, if (n.resolvedIp.isNotEmpty) n.resolvedIp].where((v) => v.trim().isNotEmpty).join(' • '),
+                      n.ipAddress.isEmpty ? n.location : '${n.ipAddress} • ${n.location}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: Colors.white60, fontSize: 12),
                     ),
                     trailing: SizedBox(width: 112, child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                      Expanded(child: Text(!n.pingDone ? '…' : n.pingMs == null ? widget.tr('مهلت تمام شد', 'Timeout') : '${_displayPing(n.pingMs)} ms', textAlign: TextAlign.end, style: TextStyle(color: _pingColor(_displayPing(n.pingMs)), fontWeight: FontWeight.bold))),
+                      Expanded(child: Text(n.pingMs == null ? '…' : '${_displayPing(n.pingMs)} ms', textAlign: TextAlign.end, style: TextStyle(color: _pingColor(_displayPing(n.pingMs)), fontWeight: FontWeight.bold))),
                       IconButton(tooltip: widget.tr('علاقه‌مندی', 'Favorite'), onPressed: () => widget.onFavorite(n), icon: Icon(n.favorite ? Icons.star : Icons.star_border, color: n.favorite ? Colors.amber : Colors.white54)),
                       if (chosen) const Icon(Icons.check_circle, color: Color(0xFFC9A7FF)),
                     ])),
