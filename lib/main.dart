@@ -261,44 +261,49 @@ class _LevikoAppState extends State<LevikoApp> {
   }
 
   Future<void> _enrichNodes(List<Node> list) async {
-    // Use the plugin's dedicated batch API instead of starting several
-    // independent Xray ping sessions at once. The native ping implementation
-    // owns shared core resources, so overlapping single-ping calls can race
-    // and make every test appear as a timeout on some Android devices.
-    for (var i = 0; i < list.length; i += 6) {
-      final batch = list.skip(i).take(6).toList();
+    // v2ray_box provides a dedicated batch tester. Keep batches small so the
+    // native Xray ping workers are not overloaded on Android devices.
+    const testUrls = <String>[
+      'https://www.gstatic.com/generate_204',
+      'https://www.google.com/generate_204',
+      'https://cp.cloudflare.com/generate_204',
+    ];
+
+    for (var i = 0; i < list.length; i += 4) {
+      final batch = list.skip(i).take(4).toList();
       final locationFutures = <Future<void>>[
         for (final n in batch) _lookupLocation(n),
       ];
 
-      Map<String, int> results = {};
-      try {
-        await vpnCore.setPingTestUrl('https://www.google.com/generate_204');
-        results = await vpnCore
-            .pingAll(batch.map((n) => n.link).toList(), timeout: 15000)
-            .timeout(const Duration(seconds: 18));
+      // null means "testing"; -1 means the test finished without a reply.
+      for (final n in batch) {
+        n.pingMs = null;
+      }
+      if (mounted) setState(() {});
 
-        // Some networks block Google's connectivity-check host. If the whole
-        // batch fails, retry once against Cloudflare's 204 endpoint.
-        if (results.isEmpty || results.values.every((value) => value < 0)) {
-          await vpnCore.setPingTestUrl('https://cp.cloudflare.com/generate_204');
+      Map<String, int> results = <String, int>{};
+      for (final testUrl in testUrls) {
+        try {
+          await vpnCore.setPingTestUrl(testUrl);
           results = await vpnCore
               .pingAll(batch.map((n) => n.link).toList(), timeout: 15000)
-              .timeout(const Duration(seconds: 18));
+              .timeout(const Duration(seconds: 20));
+          // Retry another connectivity-check URL only for nodes that failed.
+          if (batch.every((n) => (results[n.link] ?? -1) >= 0)) break;
+        } catch (_) {
+          // Try the next endpoint. Individual failures are shown as Timeout.
         }
-      } catch (_) {
-        // Leave unavailable measurements as null; connection itself is separate.
       }
 
       for (final n in batch) {
         final value = results[n.link];
-        n.pingMs = (value != null && value >= 0) ? value : null;
+        n.pingMs = (value != null && value >= 0) ? value : -1;
       }
 
       if (mounted) {
         setState(() {
-          final sorted = [...nodes]
-            ..sort((a, b) => (a.pingMs ?? 999999).compareTo(b.pingMs ?? 999999));
+          final sorted = [...nodes]..sort((a, b) => _pingSortKey(a.pingMs)
+              .compareTo(_pingSortKey(b.pingMs)));
           nodes = sorted;
           if (selected != null) {
             final match = nodes.where((x) => _nodeKey(x) == _nodeKey(selected!));
@@ -306,21 +311,23 @@ class _LevikoAppState extends State<LevikoApp> {
           }
         });
       }
+
       await Future.wait(locationFutures);
       if (!mounted) return;
       setState(() {
-        final sorted = [...nodes]
-          ..sort((a, b) => (a.pingMs ?? 999999).compareTo(b.pingMs ?? 999999));
+        final sorted = [...nodes]..sort((a, b) => _pingSortKey(a.pingMs)
+            .compareTo(_pingSortKey(b.pingMs)));
         nodes = sorted;
         if (selected != null) {
           final match = nodes.where((x) => _nodeKey(x) == _nodeKey(selected!));
           if (match.isNotEmpty) selected = match.first;
         }
-        message = tr('سرورها آماده‌اند • پینگ و IP به‌روزرسانی شد', 'Servers ready • ping and IP updated');
+        message = tr('بررسی پینگ تمام شد؛ موارد ناموفق با Timeout مشخص شده‌اند',
+            'Ping checks finished; failed tests are marked Timeout');
       });
     }
-    // Restore the app's preferred endpoint after a fallback attempt.
-    await vpnCore.setPingTestUrl('https://www.google.com/generate_204');
+    // Restore the package's documented default endpoint for future checks.
+    await vpnCore.setPingTestUrl('https://www.gstatic.com/generate_204');
   }
 
   String _decodeSubscription(String raw) {
@@ -567,7 +574,7 @@ class _LevikoAppState extends State<LevikoApp> {
 
   Future<void> fastest() async {
     if (nodes.isEmpty) return;
-    final available = nodes.where((n) => n.pingMs != null).toList()
+    final available = nodes.where((n) => n.pingMs != null && n.pingMs! >= 0).toList()
       ..sort((a, b) => a.pingMs!.compareTo(b.pingMs!));
     await connect(available.isNotEmpty ? available.first : nodes.first);
   }
@@ -721,7 +728,7 @@ class _LevikoAppState extends State<LevikoApp> {
                                   style: const TextStyle(color: Colors.white54, fontSize: 12)),
                               ])),
                               if (selected?.pingMs != null)
-                                Text('${_displayPing(selected!.pingMs)} ms', style: TextStyle(color: _pingColor(_displayPing(selected!.pingMs)), fontWeight: FontWeight.bold)),
+                                Text(selected!.pingMs! < 0 ? tr('Timeout', 'Timeout') : '${_displayPing(selected!.pingMs)} ms', style: TextStyle(color: _pingColor(_displayPing(selected!.pingMs)), fontWeight: FontWeight.bold)),
                             ]),
                           ),
                         ),
@@ -915,7 +922,9 @@ class GlobePainter extends CustomPainter {
 
 
 // Show the measured TCP latency without scaling or changing it.
-int? _displayPing(int? ping) => ping;
+int _pingSortKey(int? ping) => (ping == null || ping < 0) ? 999999 : ping;
+
+int? _displayPing(int? ping) => ping != null && ping >= 0 ? ping : null;
 
 Color _pingColor(int? ping) {
   if (ping == null) return Colors.white38;
@@ -1031,7 +1040,7 @@ class _ServerPickerSheetState extends State<_ServerPickerSheet> {
                       style: const TextStyle(color: Colors.white60, fontSize: 12),
                     ),
                     trailing: SizedBox(width: 112, child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                      Expanded(child: Text(n.pingMs == null ? '…' : '${_displayPing(n.pingMs)} ms', textAlign: TextAlign.end, style: TextStyle(color: _pingColor(_displayPing(n.pingMs)), fontWeight: FontWeight.bold))),
+                      Expanded(child: Text(n.pingMs == null ? '…' : (n.pingMs! < 0 ? 'Timeout' : '${_displayPing(n.pingMs)} ms'), textAlign: TextAlign.end, style: TextStyle(color: _pingColor(_displayPing(n.pingMs)), fontWeight: FontWeight.bold))),
                       IconButton(tooltip: widget.tr('علاقه‌مندی', 'Favorite'), onPressed: () => widget.onFavorite(n), icon: Icon(n.favorite ? Icons.star : Icons.star_border, color: n.favorite ? Colors.amber : Colors.white54)),
                       if (chosen) const Icon(Icons.check_circle, color: Color(0xFFC9A7FF)),
                     ])),
