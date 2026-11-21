@@ -263,7 +263,7 @@ class _LevikoAppState extends State<LevikoApp> {
       // Run TCP ping and DNS/IP lookup concurrently. Do not make the ping UI
       // wait for the slower geolocation HTTP request.
       await Future.wait(batch.map((n) async {
-        final pingFuture = _tcpPing(n.host, n.port);
+        final pingFuture = _realProxyPing(n.link);
         final locationFuture = _lookupLocation(n);
         n.pingMs = await pingFuture;
         if (mounted) {
@@ -483,15 +483,16 @@ class _LevikoAppState extends State<LevikoApp> {
     );
   }
 
-  // Measures the real TCP handshake time; values are never divided or falsified.
-  Future<int?> _tcpPing(String host, int port) async {
-    final watch = Stopwatch()..start();
+  // Real proxy delay test: route an HTTP probe through this exact config
+  // using the Xray core. A TCP handshake alone is not enough: expired users
+  // can still have an open server port while proxy traffic is rejected.
+  Future<int?> _realProxyPing(String link) async {
     try {
-      final socket = await Socket.connect(host, port,
-          timeout: const Duration(seconds: 3));
-      socket.destroy();
-      watch.stop();
-      return watch.elapsedMilliseconds;
+      final latency = await vpnCore.ping(
+        link,
+        timeout: 5000,
+      ).timeout(const Duration(seconds: 7));
+      return latency >= 0 ? latency : null;
     } catch (_) {
       return null;
     }
