@@ -43,6 +43,7 @@ class Node {
   final String host;
   final int port;
   int? pingMs;
+  bool pingDone = false;
   String city = '';
   String countryCode = '';
   String resolvedIp = '';
@@ -261,73 +262,38 @@ class _LevikoAppState extends State<LevikoApp> {
   }
 
   Future<void> _enrichNodes(List<Node> list) async {
-    // v2ray_box provides a dedicated batch tester. Keep batches small so the
-    // native Xray ping workers are not overloaded on Android devices.
-    const testUrls = <String>[
-      'https://www.gstatic.com/generate_204',
-      'https://www.google.com/generate_204',
-      'https://cp.cloudflare.com/generate_204',
-    ];
-
-    for (var i = 0; i < list.length; i += 4) {
-      final batch = list.skip(i).take(4).toList();
-      final locationFutures = <Future<void>>[
-        for (final n in batch) _lookupLocation(n),
-      ];
-
-      // null means "testing"; -1 means the test finished without a reply.
-      for (final n in batch) {
-        n.pingMs = null;
-      }
-      if (mounted) setState(() {});
-
-      Map<String, int> results = <String, int>{};
-      for (final testUrl in testUrls) {
-        try {
-          await vpnCore.setPingTestUrl(testUrl);
-          results = await vpnCore
-              .pingAll(batch.map((n) => n.link).toList(), timeout: 15000)
-              .timeout(const Duration(seconds: 20));
-          // Retry another connectivity-check URL only for nodes that failed.
-          if (batch.every((n) => (results[n.link] ?? -1) >= 0)) break;
-        } catch (_) {
-          // Try the next endpoint. Individual failures are shown as Timeout.
+    for (var i = 0; i < list.length; i += 6) {
+      final batch = list.skip(i).take(6).toList();
+      // Run TCP ping and DNS/IP lookup concurrently. Do not make the ping UI
+      // wait for the slower geolocation HTTP request.
+      await Future.wait(batch.map((n) async {
+        final pingFuture = _tcpPing(n.host, n.port);
+        final locationFuture = _lookupLocation(n);
+        n.pingMs = await pingFuture;
+        n.pingDone = true;
+        if (mounted) {
+          setState(() {
+            final sorted = [...nodes]..sort((a, b) => (a.pingMs ?? 999999).compareTo(b.pingMs ?? 999999));
+            nodes = sorted;
+            if (selected != null) {
+              final match = nodes.where((x) => _nodeKey(x) == _nodeKey(selected!));
+              if (match.isNotEmpty) selected = match.first;
+            }
+          });
         }
-      }
-
-      for (final n in batch) {
-        final value = results[n.link];
-        n.pingMs = (value != null && value >= 0) ? value : -1;
-      }
-
-      if (mounted) {
-        setState(() {
-          final sorted = [...nodes]..sort((a, b) => _pingSortKey(a.pingMs)
-              .compareTo(_pingSortKey(b.pingMs)));
-          nodes = sorted;
-          if (selected != null) {
-            final match = nodes.where((x) => _nodeKey(x) == _nodeKey(selected!));
-            if (match.isNotEmpty) selected = match.first;
-          }
-        });
-      }
-
-      await Future.wait(locationFutures);
+        await locationFuture;
+      }));
       if (!mounted) return;
       setState(() {
-        final sorted = [...nodes]..sort((a, b) => _pingSortKey(a.pingMs)
-            .compareTo(_pingSortKey(b.pingMs)));
+        final sorted = [...nodes]..sort((a, b) => (a.pingMs ?? 999999).compareTo(b.pingMs ?? 999999));
         nodes = sorted;
         if (selected != null) {
           final match = nodes.where((x) => _nodeKey(x) == _nodeKey(selected!));
           if (match.isNotEmpty) selected = match.first;
         }
-        message = tr('بررسی پینگ تمام شد؛ موارد ناموفق با Timeout مشخص شده‌اند',
-            'Ping checks finished; failed tests are marked Timeout');
+        message = tr('سرورها آماده‌اند • پینگ و IP به‌روزرسانی شد', 'Servers ready • ping and IP updated');
       });
     }
-    // Restore the package's documented default endpoint for future checks.
-    await vpnCore.setPingTestUrl('https://www.gstatic.com/generate_204');
   }
 
   String _decodeSubscription(String raw) {
@@ -522,18 +488,28 @@ class _LevikoAppState extends State<LevikoApp> {
     );
   }
 
-  // Real proxy delay test: route an HTTP probe through this exact config
-  // using the Xray core. A TCP handshake alone is not enough: expired users
-  // can still have an open server port while proxy traffic is rejected.
-  Future<int?> _realProxyPing(String link) async {
+  // TCP connect-time probe. The previous native Xray ping bridge was built
+  // with an empty MeasureOutboundDelay stub by the CI workflow, so it always
+  // returned an empty result and every node appeared to time out. This probe
+  // measures the time to establish a TCP connection to the node endpoint.
+  // It is a reachability/handshake estimate, not end-to-end proxy latency.
+  Future<int?> _tcpPing(String host, int port) async {
+    if (host.trim().isEmpty || port < 1 || port > 65535) return null;
+    final stopwatch = Stopwatch()..start();
+    Socket? socket;
     try {
-      final latency = await vpnCore.ping(
-        link,
-        timeout: 10000,
-      ).timeout(const Duration(seconds: 12));
-      return latency >= 0 ? latency : null;
+      socket = await Socket.connect(
+        host,
+        port,
+        timeout: const Duration(seconds: 8),
+      );
+      stopwatch.stop();
+      final elapsed = stopwatch.elapsedMilliseconds;
+      return elapsed < 1 ? 1 : elapsed;
     } catch (_) {
       return null;
+    } finally {
+      socket?.destroy();
     }
   }
 
@@ -574,7 +550,7 @@ class _LevikoAppState extends State<LevikoApp> {
 
   Future<void> fastest() async {
     if (nodes.isEmpty) return;
-    final available = nodes.where((n) => n.pingMs != null && n.pingMs! >= 0).toList()
+    final available = nodes.where((n) => n.pingMs != null).toList()
       ..sort((a, b) => a.pingMs!.compareTo(b.pingMs!));
     await connect(available.isNotEmpty ? available.first : nodes.first);
   }
@@ -728,7 +704,7 @@ class _LevikoAppState extends State<LevikoApp> {
                                   style: const TextStyle(color: Colors.white54, fontSize: 12)),
                               ])),
                               if (selected?.pingMs != null)
-                                Text(selected!.pingMs! < 0 ? tr('Timeout', 'Timeout') : '${_displayPing(selected!.pingMs)} ms', style: TextStyle(color: _pingColor(_displayPing(selected!.pingMs)), fontWeight: FontWeight.bold)),
+                                Text('${_displayPing(selected!.pingMs)} ms', style: TextStyle(color: _pingColor(_displayPing(selected!.pingMs)), fontWeight: FontWeight.bold)),
                             ]),
                           ),
                         ),
@@ -848,7 +824,7 @@ class _LevikoAppState extends State<LevikoApp> {
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(ping == null ? '—' : '${_displayPing(ping)} ms',
+            Text(ping == null ? 'Timeout' : '${_displayPing(ping)} ms',
                 style: TextStyle(
                   color: _pingColor(_displayPing(ping)),
                   fontWeight: FontWeight.bold, fontSize: 12)),
@@ -922,9 +898,7 @@ class GlobePainter extends CustomPainter {
 
 
 // Show the measured TCP latency without scaling or changing it.
-int _pingSortKey(int? ping) => (ping == null || ping < 0) ? 999999 : ping;
-
-int? _displayPing(int? ping) => ping != null && ping >= 0 ? ping : null;
+int? _displayPing(int? ping) => ping;
 
 Color _pingColor(int? ping) {
   if (ping == null) return Colors.white38;
@@ -1040,7 +1014,16 @@ class _ServerPickerSheetState extends State<_ServerPickerSheet> {
                       style: const TextStyle(color: Colors.white60, fontSize: 12),
                     ),
                     trailing: SizedBox(width: 112, child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                      Expanded(child: Text(n.pingMs == null ? '…' : (n.pingMs! < 0 ? 'Timeout' : '${_displayPing(n.pingMs)} ms'), textAlign: TextAlign.end, style: TextStyle(color: _pingColor(_displayPing(n.pingMs)), fontWeight: FontWeight.bold))),
+                      Expanded(child: Text(
+                         !n.pingDone ? '…' : (n.pingMs == null ? 'Timeout' : '${_displayPing(n.pingMs)} ms'),
+                         textAlign: TextAlign.end,
+                         style: TextStyle(
+                           color: n.pingDone && n.pingMs == null
+                               ? Colors.redAccent
+                               : _pingColor(_displayPing(n.pingMs)),
+                           fontWeight: FontWeight.bold,
+                         ),
+                       )),
                       IconButton(tooltip: widget.tr('علاقه‌مندی', 'Favorite'), onPressed: () => widget.onFavorite(n), icon: Icon(n.favorite ? Icons.star : Icons.star_border, color: n.favorite ? Colors.amber : Colors.white54)),
                       if (chosen) const Icon(Icons.check_circle, color: Color(0xFFC9A7FF)),
                     ])),
