@@ -26,9 +26,8 @@ Future<void> main() async {
   // LEVIKO runs Xray-core only; sing-box is not selected or bundled.
   final selected = await vpnCore.setCoreEngine('xray');
   await vpnCore.setServiceMode(VpnMode.vpn);
-  // Use the same widely-used true-delay endpoint as v2rayNG. The plugin's
-  // default gstatic endpoint can fail on some networks even when proxies work.
-  await vpnCore.setPingTestUrl('https://www.google.com/generate_204');
+  // Use the standard generate_204 endpoint for a real Xray outbound probe.
+  await vpnCore.setPingTestUrl('https://www.gstatic.com/generate_204');
   if (!selected) {
     throw StateError('Could not select Xray-core');
   }
@@ -264,10 +263,10 @@ class _LevikoAppState extends State<LevikoApp> {
   Future<void> _enrichNodes(List<Node> list) async {
     for (var i = 0; i < list.length; i += 6) {
       final batch = list.skip(i).take(6).toList();
-      // Run TCP ping and DNS/IP lookup concurrently. Do not make the ping UI
+      // Run the real Xray proxy-delay test and DNS/IP lookup concurrently.
       // wait for the slower geolocation HTTP request.
       await Future.wait(batch.map((n) async {
-        final pingFuture = _tcpPing(n.host, n.port);
+        final pingFuture = _realProxyPing(n.link);
         final locationFuture = _lookupLocation(n);
         n.pingMs = await pingFuture;
         n.pingDone = true;
@@ -488,28 +487,18 @@ class _LevikoAppState extends State<LevikoApp> {
     );
   }
 
-  // TCP connect-time probe. The previous native Xray ping bridge was built
-  // with an empty MeasureOutboundDelay stub by the CI workflow, so it always
-  // returned an empty result and every node appeared to time out. This probe
-  // measures the time to establish a TCP connection to the node endpoint.
-  // It is a reachability/handshake estimate, not end-to-end proxy latency.
-  Future<int?> _tcpPing(String host, int port) async {
-    if (host.trim().isEmpty || port < 1 || port > 65535) return null;
-    final stopwatch = Stopwatch()..start();
-    Socket? socket;
+  // Real proxy delay test: route an HTTP probe through this exact config
+  // using the Xray core. A TCP handshake alone is not enough: expired users
+  // can still have an open server port while proxy traffic is rejected.
+  Future<int?> _realProxyPing(String link) async {
     try {
-      socket = await Socket.connect(
-        host,
-        port,
-        timeout: const Duration(seconds: 8),
-      );
-      stopwatch.stop();
-      final elapsed = stopwatch.elapsedMilliseconds;
-      return elapsed < 1 ? 1 : elapsed;
+      final latency = await vpnCore.ping(
+        link,
+        timeout: 10000,
+      ).timeout(const Duration(seconds: 12));
+      return latency >= 0 ? latency : null;
     } catch (_) {
       return null;
-    } finally {
-      socket?.destroy();
     }
   }
 
@@ -824,7 +813,7 @@ class _LevikoAppState extends State<LevikoApp> {
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(ping == null ? 'Timeout' : '${_displayPing(ping)} ms',
+            Text(ping == null ? '—' : '${_displayPing(ping)} ms',
                 style: TextStyle(
                   color: _pingColor(_displayPing(ping)),
                   fontWeight: FontWeight.bold, fontSize: 12)),
@@ -1014,16 +1003,7 @@ class _ServerPickerSheetState extends State<_ServerPickerSheet> {
                       style: const TextStyle(color: Colors.white60, fontSize: 12),
                     ),
                     trailing: SizedBox(width: 112, child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                      Expanded(child: Text(
-                         !n.pingDone ? '…' : (n.pingMs == null ? 'Timeout' : '${_displayPing(n.pingMs)} ms'),
-                         textAlign: TextAlign.end,
-                         style: TextStyle(
-                           color: n.pingDone && n.pingMs == null
-                               ? Colors.redAccent
-                               : _pingColor(_displayPing(n.pingMs)),
-                           fontWeight: FontWeight.bold,
-                         ),
-                       )),
+                      Expanded(child: Text(!n.pingDone ? '…' : n.pingMs == null ? widget.tr('مهلت تمام شد', 'Timeout') : '${_displayPing(n.pingMs)} ms', textAlign: TextAlign.end, style: TextStyle(color: _pingColor(_displayPing(n.pingMs)), fontWeight: FontWeight.bold))),
                       IconButton(tooltip: widget.tr('علاقه‌مندی', 'Favorite'), onPressed: () => widget.onFavorite(n), icon: Icon(n.favorite ? Icons.star : Icons.star_border, color: n.favorite ? Colors.amber : Colors.white54)),
                       if (chosen) const Icon(Icons.check_circle, color: Color(0xFFC9A7FF)),
                     ])),
