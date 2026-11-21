@@ -26,8 +26,9 @@ Future<void> main() async {
   // LEVIKO runs Xray-core only; sing-box is not selected or bundled.
   final selected = await vpnCore.setCoreEngine('xray');
   await vpnCore.setServiceMode(VpnMode.vpn);
-  // Keep v2ray_box's default ping URL (https://www.gstatic.com/generate_204).
-  // This is the package's documented default and is used by its native ping test.
+  // Use the same widely-used true-delay endpoint as v2rayNG. The plugin's
+  // default gstatic endpoint can fail on some networks even when proxies work.
+  await vpnCore.setPingTestUrl('https://www.google.com/generate_204');
   if (!selected) {
     throw StateError('Could not select Xray-core');
   }
@@ -260,25 +261,38 @@ class _LevikoAppState extends State<LevikoApp> {
   }
 
   Future<void> _enrichNodes(List<Node> list) async {
+    // Use the plugin's dedicated batch API instead of starting several
+    // independent Xray ping sessions at once. The native ping implementation
+    // owns shared core resources, so overlapping single-ping calls can race
+    // and make every test appear as a timeout on some Android devices.
     for (var i = 0; i < list.length; i += 6) {
       final batch = list.skip(i).take(6).toList();
+      final locationFutures = <Future<void>>[
+        for (final n in batch) _lookupLocation(n),
+      ];
 
-      // Use v2ray_box's native pingAll implementation, the same API intended
-      // for V2Box-style server-list testing. It tests each share link through
-      // the selected Xray core and returns latency in milliseconds (-1 on fail).
-      final locationTasks = batch.map(_lookupLocation).toList();
-      Map<String, int> pingResults = {};
+      Map<String, int> results = {};
       try {
-        pingResults = await vpnCore
-            .pingAll(batch.map((n) => n.link).toList(), timeout: 10000)
-            .timeout(const Duration(seconds: 13));
+        await vpnCore.setPingTestUrl('https://www.google.com/generate_204');
+        results = await vpnCore
+            .pingAll(batch.map((n) => n.link).toList(), timeout: 15000)
+            .timeout(const Duration(seconds: 18));
+
+        // Some networks block Google's connectivity-check host. If the whole
+        // batch fails, retry once against Cloudflare's 204 endpoint.
+        if (results.isEmpty || results.values.every((value) => value < 0)) {
+          await vpnCore.setPingTestUrl('https://cp.cloudflare.com/generate_204');
+          results = await vpnCore
+              .pingAll(batch.map((n) => n.link).toList(), timeout: 15000)
+              .timeout(const Duration(seconds: 18));
+        }
       } catch (_) {
-        // Keep failures as null; never display a fabricated latency.
+        // Leave unavailable measurements as null; connection itself is separate.
       }
 
       for (final n in batch) {
-        final latency = pingResults[n.link];
-        n.pingMs = (latency != null && latency >= 0) ? latency : null;
+        final value = results[n.link];
+        n.pingMs = (value != null && value >= 0) ? value : null;
       }
 
       if (mounted) {
@@ -292,10 +306,7 @@ class _LevikoAppState extends State<LevikoApp> {
           }
         });
       }
-
-      // Location/IP lookups are independent of ping and must not delay it.
-      await Future.wait(locationTasks);
-
+      await Future.wait(locationFutures);
       if (!mounted) return;
       setState(() {
         final sorted = [...nodes]
@@ -308,6 +319,8 @@ class _LevikoAppState extends State<LevikoApp> {
         message = tr('سرورها آماده‌اند • پینگ و IP به‌روزرسانی شد', 'Servers ready • ping and IP updated');
       });
     }
+    // Restore the app's preferred endpoint after a fallback attempt.
+    await vpnCore.setPingTestUrl('https://www.google.com/generate_204');
   }
 
   String _decodeSubscription(String raw) {
@@ -500,6 +513,21 @@ class _LevikoAppState extends State<LevikoApp> {
         },
       ),
     );
+  }
+
+  // Real proxy delay test: route an HTTP probe through this exact config
+  // using the Xray core. A TCP handshake alone is not enough: expired users
+  // can still have an open server port while proxy traffic is rejected.
+  Future<int?> _realProxyPing(String link) async {
+    try {
+      final latency = await vpnCore.ping(
+        link,
+        timeout: 10000,
+      ).timeout(const Duration(seconds: 12));
+      return latency >= 0 ? latency : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> connect([Node? target]) async {
