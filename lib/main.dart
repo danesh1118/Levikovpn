@@ -12,7 +12,11 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 final V2rayBox vpnCore = V2rayBox();
 
-const subscriptionUrl =
+// The app reads this small control file from this repository on every refresh.
+// Change subscription.json in GitHub to switch subscription sources without an APK update.
+const subscriptionConfigUrl =
+    'https://raw.githubusercontent.com/danesh1118/Levikovpn/main/subscription.json';
+const defaultSubscriptionUrl =
     'https://raw.githubusercontent.com/danesh1118/SS/refs/heads/main/CC';
 
 // This file is hosted in this public repository. Change update.json to control
@@ -225,8 +229,41 @@ class _LevikoAppState extends State<LevikoApp> {
     if (mounted) setState(() { loading = nodes.isEmpty; message = tr('در حال دریافت فهرست سرورها…', 'Fetching server list…'); });
     try {
       await favoritesReady;
-      final response = await http.get(Uri.parse(subscriptionUrl)).timeout(const Duration(seconds: 18));
+      // Fetch the current subscription URL remotely. A timestamp query and
+      // no-cache headers help avoid stale raw-GitHub/CDN responses.
+      final configUri = Uri.parse(subscriptionConfigUrl).replace(
+        queryParameters: {'_': DateTime.now().millisecondsSinceEpoch.toString()},
+      );
+      final configResponse = await http.get(configUri, headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+      }).timeout(const Duration(seconds: 12));
+      var activeSubscriptionUrl = defaultSubscriptionUrl;
+      var changeMessage = '';
+      if (configResponse.statusCode == 200) {
+        final config = jsonDecode(configResponse.body);
+        if (config is Map<String, dynamic>) {
+          final configuredUrl = (config['url'] ?? '').toString().trim();
+          if (config['enabled'] != false && configuredUrl.isNotEmpty) {
+            final parsedUrl = Uri.tryParse(configuredUrl);
+            if (parsedUrl != null &&
+                (parsedUrl.scheme == 'https' || parsedUrl.scheme == 'http') &&
+                parsedUrl.host.isNotEmpty) {
+              activeSubscriptionUrl = configuredUrl;
+            }
+          }
+          changeMessage = (config['message'] ?? '').toString().trim();
+        }
+      }
+      final prefs = await SharedPreferences.getInstance();
+      final previousUrl = prefs.getString('active_subscription_url');
+      final subscriptionChanged = previousUrl != null &&
+          previousUrl.isNotEmpty && previousUrl != activeSubscriptionUrl;
+      final response = await http.get(Uri.parse(activeSubscriptionUrl),
+          headers: {'Cache-Control': 'no-cache', 'Pragma': 'no-cache'})
+          .timeout(const Duration(seconds: 18));
       if (response.statusCode != 200) throw Exception('HTTP ${response.statusCode}');
+      await prefs.setString('active_subscription_url', activeSubscriptionUrl);
       final body = _decodeSubscription(response.body);
       // Keep this scheme allow-list aligned with the V2Ray Box Xray-core parser.
       // Transport compatibility (including XHTTP) is handled by Xray-core.
@@ -248,7 +285,21 @@ class _LevikoAppState extends State<LevikoApp> {
       for (final n in parsed) { n.favorite = favoriteKeys.contains(_nodeKey(n)); }
       parsed.sort((a,b) => a.name.compareTo(b.name));
       if (!mounted) return;
-      setState(() { nodes = parsed; selected ??= parsed.first; loading = false; message = tr('${parsed.length} سرور دریافت شد؛ در حال بررسی پینگ و موقعیت…', '${parsed.length} servers loaded; checking ping and location…'); });
+      setState(() {
+        nodes = parsed;
+        selected ??= parsed.first;
+        loading = false;
+        message = subscriptionChanged
+            ? (changeMessage.isNotEmpty ? changeMessage : tr('منبع سابسکریپشن تغییر کرد؛ سرورها به‌روز شدند.', 'Subscription source changed; servers updated.'))
+            : tr('${parsed.length} سرور دریافت شد؛ در حال بررسی پینگ و موقعیت…', '${parsed.length} servers loaded; checking ping and location…');
+      });
+      if (subscriptionChanged && _navigatorKey.currentContext != null) {
+        ScaffoldMessenger.of(_navigatorKey.currentContext!).showSnackBar(
+          SnackBar(content: Text(changeMessage.isNotEmpty
+              ? changeMessage
+              : tr('لینک سابسکریپشن تغییر کرد و سرورها به‌روز شدند.', 'Subscription link changed and servers were updated.'))),
+        );
+      }
       // Do not block the first screen on slow geolocation services. Enrich in small parallel batches.
       unawaited(_enrichNodes(parsed));
     } catch (e) {
