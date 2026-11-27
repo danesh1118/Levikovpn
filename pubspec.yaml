@@ -1,7 +1,7 @@
 name: leviko_vpn
 description: Leviko VPN Android client
 publish_to: "none"
-version: 1.2.1+3
+version: 1.2.2+4
 
 environment:
   sdk: ">=3.12.0 <4.0.0"
